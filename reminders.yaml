@@ -144,8 +144,3 @@ reminders:
   # ======================================================================
   # OTROS
   # ======================================================================
-
-  - id: pago-arriendo
-    name: "Pagar el arriendo"
-    cron: "0 9 1 * *"           # el día 1 de cada mes a las 9:00
-    message: "🏠 Hoy se paga el arriendo."
