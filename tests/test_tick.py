@@ -1,0 +1,236 @@
+"""El tick: recuperar retrasos, no enviar nada dos veces, y no despertar la
+base de datos cuando no hay nada que hacer."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from recordatorios.config import Settings
+from recordatorios.models import Reminder
+from recordatorios.store import Store
+from recordatorios.tick import run_tick
+
+UTC = timezone.utc
+
+# 2026-08-03 07:00 en Bogotá (UTC-5).
+OCURRENCIA = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
+
+
+class FakeSender:
+    """Emisor de mentira: cuenta envíos y puede fallar a demanda."""
+
+    def __init__(self, fallos: int = 0) -> None:
+        self.enviados: list[tuple[str, str]] = []
+        self.fallos_restantes = fallos
+
+    def send_message(self, chat_id, text, parse_mode=None, silent=False):
+        if self.fallos_restantes > 0:
+            self.fallos_restantes -= 1
+            raise RuntimeError("Telegram no responde")
+        self.enviados.append((chat_id, text))
+        return {"message_id": len(self.enviados)}
+
+
+@pytest.fixture
+def store(tmp_path: Path):
+    s = Store.open(None, sqlite_path=tmp_path / "test.db")
+    yield s
+    s.close()
+
+
+@pytest.fixture
+def settings() -> Settings:
+    return Settings(
+        telegram_token="token",
+        database_url=None,
+        reminders_file=Path("reminders.yaml"),
+        lookback_minutes=120,
+        max_window_hours=6,
+    )
+
+
+def lunes(**overrides) -> Reminder:
+    base = dict(
+        id="lunes",
+        name="Lunes",
+        cron="0 7 * * 1",
+        messages=("sacar la basura",),
+        chat_id="555",
+        timezone="America/Bogota",
+    )
+    base.update(overrides)
+    return Reminder(**base)
+
+
+def test_envia_lo_que_vencio_en_la_ventana(store, settings):
+    sender = FakeSender()
+
+    resultado = run_tick([lunes()], store, sender, settings, now=OCURRENCIA + timedelta(minutes=3))
+
+    assert [o.status for o in resultado.outcomes] == ["sent"]
+    assert sender.enviados == [("555", "sacar la basura")]
+
+
+def test_no_envia_dos_veces_la_misma_ocurrencia(store, settings):
+    sender = FakeSender()
+    run_tick([lunes()], store, sender, settings, now=OCURRENCIA + timedelta(minutes=3))
+
+    # El tick siguiente vuelve a ver la misma ocurrencia dentro de su ventana.
+    resultado = run_tick([lunes()], store, sender, settings, now=OCURRENCIA + timedelta(minutes=8))
+
+    assert [o.status for o in resultado.outcomes] == ["already_handled"]
+    assert len(sender.enviados) == 1
+
+
+def test_recupera_un_tick_atrasado(store, settings):
+    # El workflow no corrió por un buen rato; la ocurrencia cayó en el medio.
+    sender = FakeSender()
+
+    resultado = run_tick([lunes()], store, sender, settings, now=OCURRENCIA + timedelta(minutes=50))
+
+    assert [o.status for o in resultado.outcomes] == ["sent"]
+    assert len(sender.enviados) == 1
+
+
+def test_descarta_lo_que_llega_demasiado_tarde(store, settings):
+    # Con un max_delay más corto que la ventana, la ocurrencia entra en el
+    # rango pero igual se descarta por vieja.
+    sender = FakeSender()
+    reminder = lunes(max_delay_minutes=30)
+
+    resultado = run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(hours=1))
+
+    assert [o.status for o in resultado.outcomes] == ["skipped_stale"]
+    assert sender.enviados == []
+    # Descartar no requiere consultar nada.
+    assert resultado.touched_database is False
+    assert store.connected is False
+
+
+def test_un_fallo_se_reintenta_en_el_siguiente_tick(store, settings):
+    sender = FakeSender(fallos=1)
+
+    resultado = run_tick([lunes()], store, sender, settings, now=OCURRENCIA + timedelta(minutes=2))
+    assert [o.status for o in resultado.outcomes] == ["failed"]
+    assert sender.enviados == []
+
+    # La ocurrencia sigue dentro de la ventana, así que se reintenta sola.
+    resultado = run_tick([lunes()], store, sender, settings, now=OCURRENCIA + timedelta(minutes=7))
+    assert [o.status for o in resultado.outcomes] == ["sent"]
+    assert len(sender.enviados) == 1
+
+
+def test_un_fallo_deja_de_reintentarse_al_pasarse_de_max_delay(store, settings):
+    sender = FakeSender(fallos=99)
+    reminder = lunes(max_delay_minutes=30)
+
+    run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(minutes=5))
+    resultado = run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(minutes=45))
+
+    assert [o.status for o in resultado.outcomes] == ["skipped_stale"]
+
+
+def test_un_fallo_no_bloquea_a_los_demas(store, settings):
+    class SoloFallaUno(FakeSender):
+        def send_message(self, chat_id, text, parse_mode=None, silent=False):
+            if chat_id == "malo":
+                raise RuntimeError("chat inexistente")
+            return super().send_message(chat_id, text, parse_mode, silent)
+
+    sender = SoloFallaUno()
+    recordatorios = [lunes(id="malo", chat_id="malo"), lunes(id="bueno")]
+
+    resultado = run_tick(
+        recordatorios, store, sender, settings, now=OCURRENCIA + timedelta(minutes=2)
+    )
+
+    assert {o.reminder.id: o.status for o in resultado.outcomes} == {
+        "malo": "failed",
+        "bueno": "sent",
+    }
+    assert len(sender.enviados) == 1
+
+
+def test_ignora_los_pausados(store, settings):
+    sender = FakeSender()
+
+    resultado = run_tick(
+        [lunes(enabled=False)], store, sender, settings, now=OCURRENCIA + timedelta(minutes=2)
+    )
+
+    assert resultado.outcomes == []
+    assert sender.enviados == []
+
+
+def test_un_tick_sin_nada_pendiente_no_abre_la_conexion(store, settings):
+    # Esta es la propiedad que mantiene el compute de Neon dormido: de los ~8600
+    # ticks del mes, casi todos terminan acá.
+    sender = FakeSender()
+    martes = OCURRENCIA + timedelta(days=1)
+
+    resultado = run_tick([lunes()], store, sender, settings, now=martes)
+
+    assert resultado.outcomes == []
+    assert resultado.touched_database is False
+    assert store.connected is False
+
+
+def test_dry_run_no_envia_ni_escribe(store, settings):
+    sender = FakeSender()
+    ahora = OCURRENCIA + timedelta(minutes=2)
+
+    resultado = run_tick([lunes()], store, sender, settings, now=ahora, dry_run=True)
+
+    assert [o.status for o in resultado.outcomes] == ["would_send"]
+    assert sender.enviados == []
+    assert store.connected is False
+
+    # Y después de simular, el envío real sigue disponible.
+    resultado = run_tick([lunes()], store, sender, settings, now=ahora)
+    assert [o.status for o in resultado.outcomes] == ["sent"]
+
+
+def test_la_ventana_no_pasa_del_tope_duro(store, settings):
+    holgada = Settings(
+        telegram_token="token",
+        database_url=None,
+        reminders_file=Path("reminders.yaml"),
+        lookback_minutes=60 * 24 * 10,  # diez días, a todas luces demasiado
+        max_window_hours=6,
+    )
+    sender = FakeSender()
+    ahora = OCURRENCIA + timedelta(minutes=2)
+
+    resultado = run_tick([lunes()], store, sender, holgada, now=ahora)
+
+    assert resultado.window_start == ahora - timedelta(hours=6)
+
+
+def test_los_lunes_alternos_no_se_pisan(store, settings):
+    from datetime import date
+
+    anchor = date(2026, 8, 3)
+    a = lunes(id="a", every_weeks=2, week_offset=0, anchor=anchor, messages=("A",))
+    b = lunes(id="b", every_weeks=2, week_offset=1, anchor=anchor, messages=("B",))
+    sender = FakeSender()
+
+    for semana, esperado in enumerate(["A", "B", "A", "B"]):
+        momento = OCURRENCIA + timedelta(days=7 * semana, minutes=1)
+        run_tick([a, b], store, sender, settings, now=momento)
+        assert [texto for _, texto in sender.enviados][-1] == esperado
+
+    assert [texto for _, texto in sender.enviados] == ["A", "B", "A", "B"]
+
+
+def test_el_historial_registra_los_envios(store, settings):
+    sender = FakeSender()
+    run_tick([lunes()], store, sender, settings, now=OCURRENCIA + timedelta(minutes=2))
+
+    historial = store.history()
+    assert len(historial) == 1
+    assert historial[0].reminder_id == "lunes"
+    assert historial[0].status == "sent"
+    assert historial[0].occurrence_at == OCURRENCIA

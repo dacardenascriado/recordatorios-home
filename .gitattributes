@@ -1,0 +1,3 @@
+# Los workflows corren en Linux: un CRLF en un bloque `run:` rompe bash con
+# errores de "$'\r': command not found". Todo el repo se guarda con LF.
+* text=auto eol=lf

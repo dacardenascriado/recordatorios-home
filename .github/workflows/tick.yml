@@ -1,0 +1,78 @@
+name: tick
+
+# El reloj de la aplicación. GitHub no garantiza puntualidad (una corrida de
+# */5 puede llegar con 10-20 minutos de retraso, o saltarse), por eso el tick
+# trabaja por ventanas: recupera lo que se haya vencido desde la corrida
+# anterior en vez de mirar solo el instante actual.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      accion:
+        description: "Qué ejecutar"
+        type: choice
+        default: check
+        options:
+          - check # revisa YAML, token, chats y base de datos. No envía nada
+          - dry-run # muestra qué se enviaría ahora mismo. No envía nada
+          - tick # la corrida normal
+          - send-test # envía un recordatorio ya, para probar de punta a punta
+      send_test_id:
+        description: "Solo para send-test: id del recordatorio (ej. basura-lun-mie-manana)"
+        type: string
+        default: ""
+
+# Nunca dos ticks a la vez: evita reintentos solapados sobre la misma ventana.
+concurrency:
+  group: tick
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar dependencias
+        run: pip install -e ".[postgres]"
+
+      - name: Ejecutar
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # Los nombres no se publican en reminders.yaml. Al venir de secrets,
+          # GitHub también los enmascara en el log de esta corrida.
+          PERSONA_1: ${{ secrets.PERSONA_1 }}
+          PERSONA_2: ${{ secrets.PERSONA_2 }}
+          PERSONA_3: ${{ secrets.PERSONA_3 }}
+          PERSONA_4: ${{ secrets.PERSONA_4 }}
+          # Por env y no interpoladas en el script: un ${{ }} suelto dentro de
+          # bash es una vía de inyección.
+          ACCION: ${{ inputs.accion }}
+          SEND_TEST_ID: ${{ inputs.send_test_id }}
+        run: |
+          # En las corridas por cron no hay inputs: ahí siempre es un tick.
+          case "${ACCION:-tick}" in
+            check)     python -m recordatorios check ;;
+            dry-run)   python -m recordatorios tick --dry-run ;;
+            send-test)
+              if [ -z "$SEND_TEST_ID" ]; then
+                echo "Falta 'send_test_id': poné el id del recordatorio a probar." >&2
+                exit 1
+              fi
+              python -m recordatorios send-test --id "$SEND_TEST_ID"
+              ;;
+            *)         python -m recordatorios tick ;;
+          esac

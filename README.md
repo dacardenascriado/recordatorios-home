@@ -1,0 +1,403 @@
+# recordatorios-home
+
+Recordatorios recurrentes que llegan por Telegram. Los horarios se definen en
+[`reminders.yaml`](reminders.yaml), el reloj lo pone GitHub Actions y el estado
+vive en Neon. Sin servidor, sin tarjeta de crédito, sin nada que se duerma.
+
+Resuelve el caso que cron por sí solo no expresa: **turnos rotativos entre
+varias personas** — el aseo del baño los lunes y jueves, tres personas que se
+van alternando, y cada aviso nombrando a quien le toca.
+
+---
+
+## Por qué no un servidor (y por qué Render no encaja aquí)
+
+La idea inicial —una app Python con su propio scheduler en Render— choca con
+cómo funciona el plan gratuito en 2026:
+
+| | Render free |
+|---|---|
+| Web service | Se apaga a los **15 minutos sin tráfico**; despertar tarda ~30-50 s |
+| Cron Jobs | **No existen en free.** Son un servicio de pago |
+| Background Workers | **No existen en free.** También de pago |
+| Postgres free | 1 GB y **la base expira a los 30 días** |
+| Horas | 750 al mes (un mes completo son 744, así que no sobra casi nada) |
+
+Un `APScheduler` viviendo dentro de un web service gratuito simplemente no
+dispara: está dormido justo cuando toca. Se puede parchar con un pinger
+externo que lo despierte cada 14 minutos, pero entonces el ping ya es el
+verdadero reloj — y si el reloj va a estar afuera de todos modos, el servidor
+sobra.
+
+Así que el reloj es explícito: **GitHub Actions ejecuta un tick cada 5 minutos**
+y ese tick decide qué mandar. Gratis e ilimitado en repos públicos, y sin nada
+que mantener despierto.
+
+Lo que se cede a cambio:
+
+- **Puntualidad.** Actions no garantiza la hora exacta: un cron `*/5` puede
+  llegar con 10-20 minutos de retraso en horas pico, o saltarse una corrida.
+  Para recordatorios domésticos alcanza; para algo al minuto exacto, no sirve.
+- **Los cambios van por git.** Crear un recordatorio es editar el YAML y hacer
+  push. No hay interfaz web (ver [Si algún día querés UI](#si-algún-día-querés-ui)).
+- **GitHub apaga los workflows programados** de un repo con 60 días sin
+  actividad. Por eso está [`keepalive.yml`](.github/workflows/keepalive.yml),
+  que hace un commit trivial una vez al mes.
+
+El tick nunca pierde un recordatorio por un retraso: no pregunta "¿toca justo
+ahora?" sino "¿qué venció desde la corrida anterior?". Si Actions se saltó tres
+turnos, el siguiente tick recupera lo pendiente.
+
+---
+
+## Cómo se expresan los lunes alternos
+
+Cron sabe decir "los lunes y jueves", pero no sabe decir "y le toca a la
+siguiente persona de la lista". Eso lo resuelve `rotation`.
+
+```yaml
+- id: bano-manana
+  cron: "0 6 * * 1,4"        # lunes y jueves a las 6:00
+  rotation:                  # se turnan en este orden
+    - "${PERSONA_1}"
+    - "${PERSONA_2}"
+    - "${PERSONA_3}"
+  anchor: 2026-08-03         # el primer turno es de PERSONA_1
+  message: "🧽 Buenos días {turno}, el baño te espera."
+```
+
+Los nombres entran por `${PERSONA_n}` porque este repo es público — ver
+[Puesta en marcha](#3-el-repositorio). Si los tuyos no son sensibles, podés
+escribirlos literales: `rotation: [Ana, Beto, Carla]`.
+
+**El turno avanza una vez por día de disparo, no por semana ni por aviso.** Con
+dos días de aseo y tres personas, el ciclo completo dura tres semanas:
+
+|  | lunes | jueves |
+|---|---|---|
+| semana 1 | Ana | Beto |
+| semana 2 | Carla | Ana |
+| semana 3 | Beto | Carla |
+
+Que el turno se cuente por día es lo que permite tener dos avisos el mismo día
+—uno a las 6:00 y otro a las 18:00— nombrando a la misma persona. Para eso los
+dos recordatorios tienen que compartir `rotation`, `anchor` y los mismos días
+en el cron; si divergen, cada uno contaría su propia secuencia.
+
+En los mensajes podés usar `{turno}` (a quién le toca) y `{siguiente}` (quién
+viene después).
+
+### Mensajes rotativos
+
+Un chiste repetido cada semana deja de ser chiste. `message` acepta una lista y
+los textos se van turnando con el mismo índice que las personas:
+
+```yaml
+  message:
+    - "🧽 {turno}, hoy sos vos."
+    - "🚿 El baño llama a {turno}. Mañana le toca a {siguiente}."
+    - "✨ {turno}, tu momento de brillar (y de hacer brillar el baño)."
+```
+
+Como las dos listas suelen tener largos distintos, las combinaciones tardan en
+repetirse: 3 personas × 5 mensajes son 15 turnos antes de volver al mismo par.
+
+### La alternativa de bajo nivel
+
+`every_weeks` + `week_offset` filtran *qué semanas* cuentan, sin nombrar a
+nadie. Sirve cuando querés algo cada dos semanas sin turnos de personas:
+
+```yaml
+  cron: "0 7 * * 1"
+  every_weeks: 2       # 1 de cada 2 semanas...
+  week_offset: 0       # ...la "par", contando desde el anchor
+  anchor: 2026-08-03
+```
+
+Los dos mecanismos se pueden combinar: el filtro de semanas decide si el
+recordatorio dispara, y la rotación decide a quién nombra.
+
+### Comprobalo antes de subir nada
+
+```bash
+python -m recordatorios agenda --days 21
+```
+
+```
+Próximos 21 días — 12 ejecución(es)
+
+  2026-08-03 06:00 -05 (Mon)       bano-manana  →  Ana
+  2026-08-03 18:00 -05 (Mon)       bano-tarde   →  Ana
+  2026-08-06 06:00 -05 (Thu)       bano-manana  →  Beto
+  2026-08-06 18:00 -05 (Thu)       bano-tarde   →  Beto
+  2026-08-10 06:00 -05 (Mon)       bano-manana  →  Carla
+  ...
+```
+
+---
+
+## Puesta en marcha
+
+### 1. El bot de Telegram
+
+1. Escribile a [@BotFather](https://t.me/BotFather) → `/newbot` → seguí los pasos.
+2. Guardá el token que te da (`123456789:AA...`).
+3. Mandale un mensaje cualquiera a tu bot desde el chat donde querés recibir los
+   recordatorios (si es un grupo, agregá el bot al grupo primero).
+4. Averiguá el `chat_id` abriendo en el navegador:
+   `https://api.telegram.org/bot<TU_TOKEN>/getUpdates` y buscá `"chat":{"id":...}`.
+   Los chats privados dan un número positivo; los grupos, uno negativo.
+
+### 2. La base de datos (Neon)
+
+Los runners de Actions son efímeros: no recuerdan qué se envió. Ese estado va a
+Neon, que tiene un plan gratuito sin caducidad ni tarjeta.
+
+1. Creá una cuenta en [neon.tech](https://neon.tech) y un proyecto
+   (`recordatorios-home`).
+2. Copiá la cadena de conexión (`postgresql://...?sslmode=require`).
+3. Las tablas se crean solas en el primer envío real (no en cada tick); si
+   querés adelantarlo: `python -m recordatorios init-db`.
+
+> El Postgres gratuito de Render **no** sirve para esto: expira a los 30 días.
+
+### 3. El repositorio
+
+```bash
+git init
+git add .
+git commit -m "recordatorios-home"
+gh repo create recordatorios-home --public --source=. --push
+```
+
+Repo **público**: los minutos de Actions son ilimitados ahí, y en privado se
+consumirían los 2 000 mensuales. No hay secretos en el código — token, chat y
+base de datos van en GitHub Secrets.
+
+En *Settings → Secrets and variables → Actions*, creá tres secrets:
+
+| Secret | Valor |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | El token de BotFather |
+| `TELEGRAM_CHAT_ID` | El id del chat destino |
+| `DATABASE_URL` | La cadena de conexión de Neon |
+| `PERSONA_1` … `PERSONA_4` | Los nombres de las personas |
+
+Los nombres van como secrets a propósito: **el repo es público**, así que
+`reminders.yaml` los referencia como `${PERSONA_1}` en vez de escribirlos. Y al
+ser secrets, GitHub los enmascara también en los logs de Actions, donde si no
+aparecerían en cada línea de envío (`turno de …`).
+
+Los nombres de los secrets son genéricos por lo mismo: `PERSONA_1` no dice
+nada, mientras que un secret con el nombre de pila de alguien delataría
+justamente lo que intenta ocultar.
+
+### 4. Comprobar que quedó bien
+
+En la pestaña *Actions* → workflow **tick** → *Run workflow*. El desplegable
+*Qué ejecutar* trae cuatro opciones, y las dos primeras no envían nada:
+
+| Opción | Qué hace |
+|---|---|
+| `check` | Revisa las cuatro cosas que tienen que estar bien: el YAML, que el token sirva, que el bot alcance cada chat y que la base conecte. Es el diagnóstico completo |
+| `dry-run` | Muestra qué se enviaría en este instante |
+| `tick` | La corrida normal, igual a la del cron |
+| `send-test` | Manda un recordatorio ya mismo. Poné su `id` en el campo de abajo |
+
+Empezá por `check`. Si sale todo en `[OK ]`, terminás con `send-test` para ver
+un mensaje real en el grupo. A partir de ahí el tick corre solo cada 5 minutos.
+
+```
+[OK ] reminders.yaml — 6 recordatorios, 6 activos
+[OK ] Token de Telegram — el bot es @tu_bot
+[OK ] Chat -100xxxxxxxxxx — alcanzable (supergroup: La casa)
+[OK ] Base de datos (postgres) — conecta y el esquema está listo
+
+Todo en orden. Lo próximo que va a pasar:
+  2026-08-03 06:00 -05 (Mon)       bano-manana  →  Ana
+  2026-08-03 07:00 -05 (Mon)       basura-lun-mie-manana  →  Carla
+```
+
+---
+
+## Uso diario
+
+Crear o cambiar un recordatorio es editar `reminders.yaml` y hacer push. El CI
+valida el archivo en cada push, así que un typo no llega a producción.
+
+### Campos disponibles
+
+| Campo | Obligatorio | Descripción |
+|---|---|---|
+| `id` | sí | Identificador estable, minúsculas. Cambiarlo hace que el historial empiece de cero |
+| `cron` | sí | 5 campos, evaluado en `timezone` |
+| `message` | sí | Texto a enviar, o una lista de textos que se van turnando. Admite HTML de Telegram y los marcadores `{turno}` / `{siguiente}` |
+| `rotation` | no | Lista de personas que se turnan, un turno por día de disparo. Exige `anchor` y que algún mensaje use `{turno}` |
+| `name` | no | Nombre legible (por defecto, el `id`) |
+| `timezone` | no | Zona IANA. Por defecto `America/Bogota` |
+| `chat_id` | no | Chat destino. Normalmente se hereda de `defaults` |
+| `enabled` | no | `false` para pausarlo sin borrarlo |
+| `every_weeks` | no | Dispara 1 de cada N semanas. Por defecto 1 |
+| `week_offset` | no | Cuál de esas N semanas (0 … N-1) |
+| `anchor` | no | Fecha del primer turno, y semana 0 para `every_weeks` (para eso se normaliza a su lunes) |
+| `starts_on` / `ends_on` | no | Límites de vigencia (`AAAA-MM-DD`) |
+| `max_delay_minutes` | no | Si queda más atrasado que esto, se descarta en vez de llegar a destiempo. Por defecto 120, igual que la ventana de recuperación; bajalo para recordatorios que tarde no sirven |
+| `parse_mode` | no | `HTML`, `Markdown`, `MarkdownV2` o `none` |
+| `silent` | no | `true` envía sin notificación sonora |
+
+`defaults` acepta los mismos campos salvo `id`, `name`, `cron`, `message`,
+`rotation`, `every_weeks` y `week_offset`.
+
+### Comandos
+
+```bash
+python -m recordatorios check             # revisa TODO: YAML, token, chats y base de datos
+python -m recordatorios validate          # revisa el YAML y reporta todos los errores juntos
+python -m recordatorios list              # cada recordatorio con sus próximas 3 ejecuciones
+python -m recordatorios agenda --days 28  # cronología combinada
+python -m recordatorios tick --dry-run    # qué se enviaría ahora mismo
+python -m recordatorios tick              # el envío real (lo que corre en Actions)
+python -m recordatorios send-test --id X  # manda uno a mano, ignorando el horario
+python -m recordatorios history           # últimos envíos registrados
+python -m recordatorios init-db           # crea las tablas
+```
+
+### Desarrollo local
+
+```bash
+python -m venv .venv && .venv\Scripts\activate     # PowerShell
+pip install -e ".[dev,postgres]"
+copy .env.example .env                              # y completá los valores
+pytest -q
+```
+
+Sin `DATABASE_URL`, el estado va a un SQLite local (`recordatorios.db`), que es
+suficiente para probar. Los tests corren siempre sobre SQLite y no tocan la red.
+
+---
+
+## Cómo funciona por dentro
+
+```
+GitHub Actions (cada 5 min)
+        │
+        ▼
+  python -m recordatorios tick
+        │
+        ├─ lee reminders.yaml               → qué recordatorios existen
+        ├─ calcula la ventana (ahora-2h, ahora]
+        ├─ descarta lo que pasó de max_delay_minutes
+        │
+        ├─ ¿quedó algo? NO  → termina sin conectar a la base   ← ~99% de los ticks
+        │
+        └─ ¿quedó algo? SÍ  → recién acá conecta a Neon
+              ├─ claim (reminder_id, occurrence_at)
+              │     └─ ¿ya lo tomó otra corrida? → se abstiene
+              └─ POST a la Bot API de Telegram
+```
+
+Tres decisiones que sostienen todo lo demás:
+
+**Ventanas, no instantes.** El tick procesa el intervalo `(ahora - 2h, ahora]`.
+Un retraso de Actions se recupera en la corrida siguiente en vez de perderse, y
+la ventana es fija: no hay ningún cursor que mantener.
+
+**La clave primaria es la idempotencia.** La tabla `deliveries` tiene
+`PRIMARY KEY (reminder_id, occurrence_at)`. Antes de enviar, el tick inserta esa
+fila; si ya existe y está en `sent`, otra corrida ya se encargó y esta se
+abstiene. Como cada ocurrencia se identifica por sí misma, procesar la misma
+ventana veinte veces seguidas da el mismo resultado que procesarla una.
+
+Eso también hace trivial el reintento: un envío fallido queda en `failed` y
+sigue dentro de la ventana, así que los ticks siguientes lo reintentan solos
+hasta que salga o se pase de `max_delay_minutes`. Un claim que quedó colgado en
+`sending` (runner muerto a mitad de envío) se puede retomar a los 10 minutos.
+
+**La base se toca solo cuando hay algo que enviar.** El orden importa: primero
+se calcula todo con el YAML en la mano, y la conexión se abre recién si quedó
+algo pendiente. No es una optimización cosmética — es lo que hace viable el plan
+gratuito de Neon, como se explica abajo.
+
+### El presupuesto de Neon
+
+Esto merece su propio apartado porque es la restricción menos evidente del
+diseño. El plan Free de Neon da **100 CU-hours al mes** y suspende el compute
+tras 5 minutos de inactividad (no se puede desactivar).
+
+Un tick cada 5 minutos cae justo en ese borde: si cada corrida consultara la
+base, el compute no alcanzaría a dormirse nunca. A 0.25 CU encendida 24/7 son
+~182 CU-hours al mes — la cuota se agotaría **cerca del día 17** y Neon
+suspendería el proyecto hasta el mes siguiente. Los recordatorios morirían a
+mitad de mes, sin aviso.
+
+Con la conexión perezosa, la base solo despierta cuando un recordatorio vence
+de verdad. Después de cada envío queda encendida durante la ventana de
+recuperación (2 h), porque los ticks de ese rato siguen consultándola para
+confirmar que ya se envió. O sea ~0.5 CU-hours por recordatorio disparado:
+**unas 15 CU-hours al mes con 30 recordatorios**, cómodamente dentro de las 100.
+
+De ahí salen los dos únicos parámetros que conviene no tocar a la ligera:
+
+| Variable | Por defecto | Efecto de subirlo |
+|---|---|---|
+| `TICK_LOOKBACK_MINUTES` | 120 | Más tolerancia a caídas de Actions, pero más horas de compute por cada envío |
+| `TICK_MAX_WINDOW_HOURS` | 6 | Tope duro de la anterior, para que un error de dedo no vacíe la cuota |
+
+Si algún día tenés muchos recordatorios diarios y te acercás al límite, la
+palanca es bajar `TICK_LOOKBACK_MINUTES` (a 60, por ejemplo): menos margen ante
+caídas largas, la mitad de compute.
+
+### Estructura
+
+```
+reminders.yaml              definición de los recordatorios
+src/recordatorios/
+  models.py                 el dataclass Reminder
+  schedule.py               cron + filtro de semanas → ocurrencias; y turnos
+  loader.py                 parseo y validación del YAML
+  store.py                  Neon/SQLite: claims e historial (conexión perezosa)
+  telegram.py               Bot API con reintentos
+  tick.py                   la corrida: ventana → envíos
+  cli.py                    los comandos
+.github/workflows/
+  tick.yml                  el reloj (cada 5 min)
+  ci.yml                    tests + validación del YAML
+  keepalive.yml             evita que GitHub apague el cron
+```
+
+---
+
+## Problemas frecuentes
+
+**No llega nada y el workflow figura en verde.** Mirá el log del paso *Ejecutar
+tick*: imprime la ventana y qué hizo con cada ocurrencia. Un `skipped_stale`
+significa que el tick llegó más tarde que `max_delay_minutes`.
+
+**`chat not found` o `unauthorized`.** El bot no puede escribirle primero a
+alguien: mandale vos un mensaje al bot (o agregalo al grupo) antes del primer
+envío. Verificá también que el `chat_id` sea el correcto — los de grupo son
+negativos.
+
+**El mensaje se envía pero se ve raro.** Con `parse_mode: HTML`, Telegram solo
+acepta unas pocas etiquetas (`<b>`, `<i>`, `<code>`, `<a>`). Un `<` suelto rompe
+el envío: escapalo como `&lt;` o poné `parse_mode: none`.
+
+**Los workflows programados dejaron de correr.** Es la regla de los 60 días de
+inactividad. Reactivalos desde la pestaña *Actions* y verificá que `keepalive`
+esté habilitado.
+
+**Cambié la hora y llegó el recordatorio viejo.** El tick ya había procesado esa
+ocurrencia. Los cambios aplican a las ocurrencias futuras.
+
+---
+
+## Si algún día querés UI
+
+Este diseño no cierra la puerta: `schedule.py`, `store.py` y `telegram.py` no
+saben nada de GitHub Actions. Para una interfaz web bastaría con montar FastAPI
+encima y mover las definiciones del YAML a la base — el tick seguiría siendo el
+mismo, invocado por `POST /tick` en vez de por el workflow. En ese escenario
+Render vuelve a ser razonable (con el pinger externo despertándolo), o mejor una
+VM Always Free de Oracle Cloud, que no duerme.
+
+Mientras el YAML alcance, esto es menos infraestructura para mantener.

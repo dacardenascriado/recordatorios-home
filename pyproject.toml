@@ -1,0 +1,31 @@
+[project]
+name = "recordatorios-home"
+version = "0.1.0"
+description = "Recordatorios recurrentes por Telegram, definidos en YAML y disparados por GitHub Actions"
+requires-python = ">=3.11"
+dependencies = [
+    "croniter>=6.0",
+    "PyYAML>=6.0",
+    "httpx>=0.27",
+    # Windows no trae base de datos de zonas horarias del sistema, así que
+    # zoneinfo necesita esta. En Linux (los runners) se usa la del sistema.
+    "tzdata; platform_system == 'Windows'",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+recordatorios = "recordatorios.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

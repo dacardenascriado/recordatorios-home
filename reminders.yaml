@@ -1,0 +1,151 @@
+# recordatorios-home — definición de los recordatorios.
+#
+# Editar este archivo y hacer push es todo lo que hace falta para cambiar los
+# horarios: el workflow de GitHub Actions lo lee en cada tick.
+#
+# NOMBRES: este repo es público, así que las personas no se escriben acá. Van
+# en ${PERSONA_1}..${PERSONA_4}, que son secrets de GitHub. Al ser secrets,
+# además quedan enmascarados en los logs de Actions.
+#
+#   PERSONA_1, PERSONA_2, PERSONA_3 → se turnan el baño y la basura lun/mié
+#   PERSONA_4                        → viernes de basura, fijo
+#
+# Cómo funciona el horario:
+#   cron         → 5 campos (min hora día-mes mes día-semana), en `timezone`.
+#   every_weeks  → dispara solo 1 de cada N semanas. Por defecto 1 (todas).
+#   week_offset  → cuál de esas N semanas le toca (0 .. every_weeks-1).
+#   rotation     → lista de personas que se turnan, un turno por día de disparo.
+#   anchor       → fecha del primer turno / semana 0. Obligatoria con rotation.
+#
+# En los mensajes:
+#   {turno}      → a quién le toca hoy.
+#   {siguiente}  → quién sigue en la lista.
+#   message      → un texto, o una lista de textos que se van turnando.
+#
+# Validá los cambios antes de subirlos:
+#   python -m recordatorios validate
+#   python -m recordatorios agenda --days 28
+
+version: 1
+
+defaults:
+  timezone: America/Bogota
+  chat_id: "${TELEGRAM_CHAT_ID}"
+  parse_mode: HTML
+  # Si un recordatorio queda más atrasado que esto, se descarta en vez de
+  # llegar a destiempo. Por defecto coincide con la ventana de recuperación
+  # (120 min); bajalo en los recordatorios que no sirven de nada tarde.
+  max_delay_minutes: 120
+
+reminders:
+  # ======================================================================
+  # ASEO DEL BAÑO — lunes y jueves, 3 personas turnándose
+  # ======================================================================
+  # El turno avanza por día de aseo, no por semana, así que el ciclo completo
+  # dura 3 semanas:
+  #
+  #             lunes       jueves
+  #   semana 1  PERSONA_1   PERSONA_2
+  #   semana 2  PERSONA_3   PERSONA_1
+  #   semana 3  PERSONA_2   PERSONA_3
+  #   semana 4  PERSONA_1   PERSONA_2  ← vuelve a empezar
+  #
+  # Los dos avisos del mismo día (6am y 6pm) comparten turno: le tocan a la
+  # misma persona. Para que eso funcione, ambos tienen que compartir la misma
+  # lista de `rotation`, el mismo `anchor` y los mismos días en el cron.
+
+  - id: bano-manana
+    name: "Aseo del baño — aviso de la mañana"
+    cron: "0 6 * * 1,4"
+    rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
+    anchor: 2026-08-03          # el primer turno: lunes 3, PERSONA_1
+    message:
+      - "🧽 Buenos días, {turno}. El baño amaneció esperándote. No es personal, es el calendario. 📅"
+      - "🚿 {turno}, hoy sos vos. El baño no se limpia solo por más que lo mires con cariño."
+      - "✨ Arriba {turno}: te tocó el turno de dejar el baño digno de una foto. Mañana le toca a otro, hoy la gloria es tuya."
+      - "🧴 {turno}, misión del día: baño impecable. Dificultad: media. Recompensa: {siguiente} te debe una."
+      - "🪣 Se abre la jornada y el destino eligió a {turno}. El baño espera, y no tiene paciencia."
+
+  - id: bano-tarde
+    name: "Aseo del baño — control de la tarde"
+    cron: "0 18 * * 1,4"
+    rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
+    anchor: 2026-08-03          # mismo anchor: comparte el turno con el aviso de la mañana
+    message:
+      - "🕕 {turno}, la pregunta del millón: ¿el baño ya quedó limpio? 👀"
+      - "🔍 Control de calidad para {turno}. Si ya lo hiciste, ignorá este mensaje con orgullo."
+      - "⏰ {turno}, se acaba el día y el baño tiene memoria. {siguiente} está tomando nota."
+      - "🧼 Último llamado, {turno}. Después de esto ya no es olvido, es leyenda."
+      - "👏 Si el baño ya brilla, {turno}, tomate el aplauso. Si no… todavía estás a tiempo."
+
+  # ======================================================================
+  # SACAR LA BASURA — lunes, miércoles y viernes
+  # ======================================================================
+  # PERSONA_4 tiene el viernes fijo, así que va aparte. Las otras tres se
+  # reparten lunes y miércoles: 2 turnos por semana entre 3 personas, ciclo de
+  # 3 semanas, y a cada una le toca un lunes y un miércoles.
+  #
+  #             lunes       miércoles   viernes
+  #   semana 1  PERSONA_1   PERSONA_2   PERSONA_4
+  #   semana 2  PERSONA_3   PERSONA_1   PERSONA_4
+  #   semana 3  PERSONA_2   PERSONA_3   PERSONA_4
+  #   semana 4  PERSONA_1   PERSONA_2   PERSONA_4  ← vuelve a empezar
+  #
+  # Cada grupo tiene aviso a las 7:00 y control a las 19:00. Los dos avisos del
+  # mismo día comparten turno porque comparten rotation, anchor y días de cron.
+  #
+  # Si algún día PERSONA_4 puede otros días, se borran los dos basura-viernes-*
+  # y se la agrega a las listas de acá abajo con el cron "0 7 * * 1,3,5".
+
+  - id: basura-lun-mie-manana
+    name: "Basura lun/mié — aviso de la mañana"
+    cron: "0 7 * * 1,3"
+    rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
+    anchor: 2026-08-03          # lunes 3: PERSONA_1
+    message:
+      - "🗑️ El calendario no miente: hoy le toca a {turno} demostrar su talento sacando la basura. 👏"
+      - "🗑️ {turno}, la basura tiene una cita con la calle y vos sos el chofer. La próxima le toca a {siguiente}."
+      - "♻️ Turno de {turno}. Es sacar una bolsa, no escalar el Everest. Vos podés. 💪"
+      - "🚛 {turno}, el camión no espera y {siguiente} está mirando. Que no se diga."
+      - "🌅 Buenos días. Hoy la humanidad no necesita héroes, necesita que {turno} saque la basura."
+
+  - id: basura-lun-mie-tarde
+    name: "Basura lun/mié — control de la tarde"
+    cron: "0 19 * * 1,3"
+    rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
+    anchor: 2026-08-03          # mismo anchor y mismos días: comparte turno con la mañana
+    message:
+      - "🌙 {turno}, momento de la verdad: ¿la basura salió, o sigue esperando en la cocina? 👀"
+      - "🕖 Control de calidad. Si ya la sacaste, {turno}, tomate el aplauso. Si no, todavía hay tiempo."
+      - "😤 Si la bolsa sigue en la cocina, {turno}, ya no es basura: es un inquilino más."
+      - "📋 Reporte del día: la misión era de {turno}. {siguiente} está tomando nota para su turno."
+      - "🚛 {turno}, el camión ya pasó. La pregunta incómoda es si encontró algo tuyo en la puerta."
+
+  - id: basura-viernes-manana
+    name: "Basura viernes — aviso de la mañana"
+    cron: "0 7 * * 5"
+    anchor: 2026-08-03          # necesario porque hay varios mensajes rotando
+    message:
+      - "🗑️ Viernes, o sea: ${PERSONA_4} y la basura, su cita semanal. 👏"
+      - "♻️ ${PERSONA_4}, cerrás la semana como siempre: sacando la basura. Gracias por tanto. 🙌"
+      - "🚛 Es viernes y la basura ya sabe a quién esperar. Todo tuyo, ${PERSONA_4}."
+      - "🌅 Viernes de ${PERSONA_4}. La casa entera confía en vos y en esa bolsa. 💪"
+
+  - id: basura-viernes-tarde
+    name: "Basura viernes — control de la tarde"
+    cron: "0 19 * * 5"
+    anchor: 2026-08-03
+    message:
+      - "🌙 ${PERSONA_4}, ¿la basura del viernes ya voló? Cerrar la semana limpio no tiene precio."
+      - "🕖 Control de viernes, ${PERSONA_4}: decinos que la bolsa ya no está en la cocina y arrancamos el finde tranquilos. 🙏"
+      - "🎉 El fin de semana empieza oficialmente cuando la basura sale. ¿Ya arrancó, ${PERSONA_4}?"
+      - "👀 ${PERSONA_4}, la cocina y yo estamos mirando la misma bolsa. ¿O ya no?"
+
+  # ======================================================================
+  # OTROS
+  # ======================================================================
+
+  - id: pago-arriendo
+    name: "Pagar el arriendo"
+    cron: "0 9 1 * *"           # el día 1 de cada mes a las 9:00
+    message: "🏠 Hoy se paga el arriendo."

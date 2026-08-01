@@ -1,0 +1,17 @@
+.env
+*.db
+*.db-wal
+*.db-shm
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+
+# Configuración local de los editores
+.idea/
+.vscode/

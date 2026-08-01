@@ -1,0 +1,28 @@
+name: keepalive
+
+# GitHub desactiva automáticamente los workflows programados de un repositorio
+# que lleva 60 días sin actividad. Como este repo puede pasar meses sin cambios,
+# este job hace un commit trivial una vez al mes para que el tick no se apague
+# solo. Si vas a estar editando reminders.yaml seguido, podés borrarlo.
+on:
+  schedule:
+    - cron: "0 5 1 * *" # día 1 de cada mes
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Marcar actividad
+        run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .keepalive
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .keepalive
+          git diff --staged --quiet || git commit -m "chore: keepalive"
+          git push
