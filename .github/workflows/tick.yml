@@ -16,6 +16,7 @@ on:
         options:
           - check # revisa YAML, token, chats y base de datos. No envía nada
           - dry-run # muestra qué se enviaría ahora mismo. No envía nada
+          - history # últimos envíos registrados, para saber qué pasó de verdad
           - tick # la corrida normal
           - send-test # envía un recordatorio ya, para probar de punta a punta
       send_test_id:
@@ -67,6 +68,7 @@ jobs:
           case "${ACCION:-tick}" in
             check)     python -m recordatorios check ;;
             dry-run)   python -m recordatorios tick --dry-run ;;
+            history)   python -m recordatorios history --limit 50 ;;
             send-test)
               if [ -z "$SEND_TEST_ID" ]; then
                 echo "Falta 'send_test_id': poné el id del recordatorio a probar." >&2

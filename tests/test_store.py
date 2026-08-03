@@ -77,6 +77,38 @@ def test_el_historial_conserva_cada_intento(store):
     assert [fila.status for fila in store.history()] == ["sent", "failed"]  # reciente primero
 
 
+def test_marcar_vencido_deja_rastro_una_sola_vez(store):
+    assert store.mark_stale("r", OCURRENCIA, "muy tarde", AHORA) is True
+    # Los ticks siguientes de la misma ventana la ven ya marcada.
+    assert store.mark_stale("r", OCURRENCIA, "muy tarde", AHORA + timedelta(minutes=5)) is False
+
+    assert [fila.status for fila in store.history()] == ["stale"]
+
+
+def test_un_fallo_que_termina_de_vencerse_queda_como_vencido(store):
+    store.claim("r", OCURRENCIA, AHORA)
+    store.mark_failed("r", OCURRENCIA, "timeout", AHORA)
+
+    assert store.mark_stale("r", OCURRENCIA, "muy tarde", AHORA + timedelta(hours=3)) is True
+    assert [fila.status for fila in store.history()] == ["stale", "failed"]
+
+
+def test_lo_enviado_no_se_puede_marcar_como_vencido(store):
+    store.claim("r", OCURRENCIA, AHORA)
+    store.mark_sent("r", OCURRENCIA, AHORA)
+
+    assert store.mark_stale("r", OCURRENCIA, "muy tarde", AHORA + timedelta(hours=3)) is False
+    assert [fila.status for fila in store.history()] == ["sent"]
+
+
+def test_lo_vencido_no_se_vuelve_a_reclamar(store):
+    # 'stale' es terminal: si después llega un tick que lo ve dentro de plazo
+    # (relojes raros, max_delay editado), no lo revive.
+    store.mark_stale("r", OCURRENCIA, "muy tarde", AHORA)
+
+    assert store.claim("r", OCURRENCIA, AHORA + timedelta(minutes=1)) is False
+
+
 def test_prune_borra_lo_viejo_y_respeta_lo_reciente(store):
     vieja = AHORA - timedelta(days=RETENTION_DAYS + 5)
     store.claim("r", vieja, vieja)

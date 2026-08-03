@@ -56,6 +56,58 @@ def iter_occurrences(reminder: Reminder, after: datetime) -> Iterator[datetime]:
         yield local.astimezone(timezone.utc)
 
 
+def iter_occurrences_desc(reminder: Reminder, before: datetime) -> Iterator[datetime]:
+    """Ocurrencias en UTC estrictamente anteriores a `before`, de la más
+    reciente hacia atrás. El espejo de `iter_occurrences`.
+
+    Los dos límites de vigencia cambian de papel al ir para atrás: `starts_on`
+    es el que corta el recorrido (más atrás no hay nada) y `ends_on` el que
+    solo saltea.
+    """
+    tz = ZoneInfo(reminder.timezone)
+    cursor = croniter(reminder.cron, before.astimezone(tz))
+
+    for _ in range(MAX_SCAN):
+        local = cursor.get_prev(datetime)
+        local_date = local.date()
+
+        if reminder.starts_on and local_date < reminder.starts_on:
+            return
+        if reminder.ends_on and local_date > reminder.ends_on:
+            continue
+        if not week_matches(reminder, local_date):
+            continue
+
+        yield local.astimezone(timezone.utc)
+
+
+def last_run(reminder: Reminder, before: datetime | None = None) -> datetime | None:
+    """Última ejecución anterior a `before`, o None si nunca disparó."""
+    before = before or datetime.now(timezone.utc)
+    for occurrence in iter_occurrences_desc(reminder, before):
+        return occurrence
+    return None
+
+
+def nearest_run(reminder: Reminder, moment: datetime | None = None) -> datetime | None:
+    """La ocurrencia más cercana a `moment`, hacia atrás o hacia adelante.
+
+    Es lo que necesita `send-test`: si el recordatorio ya disparó hoy, la
+    prueba tiene que salir con el turno de hoy. Mirar solo hacia adelante hace
+    que una prueba por la tarde nombre a la persona de la vez siguiente.
+    """
+    moment = moment or datetime.now(timezone.utc)
+    anterior = last_run(reminder, moment)
+    siguientes = next_runs(reminder, 1, moment)
+    siguiente = siguientes[0] if siguientes else None
+
+    if anterior is None:
+        return siguiente
+    if siguiente is None:
+        return anterior
+    return anterior if (moment - anterior) <= (siguiente - moment) else siguiente
+
+
 def occurrences_between(reminder: Reminder, start: datetime, end: datetime) -> list[datetime]:
     """Ocurrencias en la ventana (start, end], en UTC.
 

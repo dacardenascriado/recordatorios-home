@@ -7,9 +7,9 @@ recupera en la corrida siguiente en vez de perderse.
 
 De esas ocurrencias, la base de datos dice cuáles ya se enviaron. La clave está
 en el orden: primero se calcula todo con el YAML en la mano, y solo si quedó
-algo pendiente se abre la conexión. La inmensa mayoría de los ticks no tiene
-nada que hacer y termina sin tocar la base — que es lo que mantiene el consumo
-de Neon en casi cero.
+algo que enviar o que descartar se abre la conexión. La inmensa mayoría de los
+ticks no tiene nada que hacer y termina sin tocar la base — que es lo que
+mantiene el consumo de Neon en casi cero.
 """
 
 from __future__ import annotations
@@ -77,7 +77,8 @@ def run_tick(
     dry_run: bool = False,
 ) -> TickResult:
     """Procesa la ventana de recuperación. `store` se conecta de forma perezosa:
-    si no hay nada que enviar, esta función no lo usa y nunca llega a abrirse."""
+    si no hay nada que enviar ni que descartar, esta función no lo usa y nunca
+    llega a abrirse."""
     now = now or datetime.now(timezone.utc)
     start = now - timedelta(minutes=_lookback_minutes(settings))
     result = TickResult(window_start=start, window_end=now, dry_run=dry_run)
@@ -90,8 +91,10 @@ def run_tick(
             candidatas.append((reminder, occurrence))
     candidatas.sort(key=lambda item: (item[1], item[0].id))
 
-    # Lo que llegó demasiado tarde se descarta acá, sin consultar nada: si no lo
-    # vamos a enviar, da igual si ya se había enviado.
+    # Lo que llegó demasiado tarde ya no se envía, pero sí se anota: un
+    # recordatorio que se pierde sin dejar rastro es el peor modo de fallo que
+    # tiene este sistema, porque nadie se entera de que faltó.
+    vencidas: list[tuple[Reminder, datetime, str]] = []
     pendientes: list[tuple[Reminder, datetime]] = []
     for reminder, occurrence in candidatas:
         retraso = now - occurrence
@@ -100,14 +103,17 @@ def run_tick(
                 f"retraso {_minutos(retraso)} > max_delay_minutes "
                 f"({reminder.max_delay_minutes} min)"
             )
-            result.outcomes.append(Outcome(reminder, occurrence, "skipped_stale", detalle))
+            vencidas.append((reminder, occurrence, detalle))
         else:
             pendientes.append((reminder, occurrence))
 
-    if not pendientes:
+    if not vencidas and not pendientes:
         return result
 
     if dry_run:
+        result.outcomes.extend(
+            Outcome(r, occ, "skipped_stale", detalle) for r, occ, detalle in vencidas
+        )
         result.outcomes.extend(
             Outcome(r, occ, "would_send", f"retraso {_minutos(now - occ)}")
             for r, occ in pendientes
@@ -117,6 +123,16 @@ def run_tick(
     result.touched_database = True
     store.init_schema()
     store.prune(now)
+
+    # Primero las vencidas: son más viejas que las pendientes, así que el
+    # informe queda en orden cronológico.
+    for reminder, occurrence, detalle in vencidas:
+        # Solo la primera vez deja rastro. Después sigue apareciendo en la
+        # ventana durante un rato y no queremos una fila por tick.
+        primera = store.mark_stale(reminder.id, occurrence, detalle, now)
+        estado = "skipped_stale" if primera else "already_handled"
+        result.outcomes.append(Outcome(reminder, occurrence, estado, detalle))
+
     for reminder, occurrence in pendientes:
         result.outcomes.append(_deliver(reminder, occurrence, store, sender, now))
 

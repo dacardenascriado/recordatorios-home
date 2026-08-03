@@ -34,6 +34,9 @@ RETENTION_DAYS = 90
 SENT = "sent"
 SENDING = "sending"
 FAILED = "failed"
+# Vencido: se pasó de max_delay_minutes y ya no se va a enviar. Es terminal,
+# igual que 'sent': el claim no lo retoma.
+STALE = "stale"
 
 
 @dataclass(frozen=True)
@@ -160,6 +163,44 @@ class Store:
             # (Postgres 9.5+ y SQLite 3.35+.)
             cur.execute(sql, params)
             return cur.fetchone() is not None
+
+    def mark_stale(
+        self, reminder_id: str, occurrence_at: datetime, detail: str, now: datetime
+    ) -> bool:
+        """Anota que una ocurrencia se descartó por vieja. True si es la primera vez.
+
+        Una ocurrencia vencida sigue apareciendo en la ventana un buen rato
+        después de vencerse, así que la ven muchos ticks seguidos. Esto la
+        registra una sola vez: la clave primaria hace de memoria, igual que en
+        `claim`. Solo pisa un intento fallido —ese es el que terminó de
+        vencerse— y nunca un 'sent'.
+        """
+        params = (
+            reminder_id,
+            self._dialect.encode_ts(occurrence_at),
+            STALE,
+            self._dialect.encode_ts(now),
+            detail,
+            FAILED,
+        )
+        sql = self._sql(
+            """
+            INSERT INTO deliveries
+                (reminder_id, occurrence_at, status, attempts, claimed_at, detail)
+            VALUES ({p}, {p}, {p}, 1, {p}, {p})
+            ON CONFLICT (reminder_id, occurrence_at) DO UPDATE
+                SET status = {excluded}.status,
+                    detail = {excluded}.detail
+                WHERE deliveries.status = {p}
+            RETURNING 1
+            """
+        )
+        with self._dialect.cursor() as cur:
+            cur.execute(sql, params)
+            if cur.fetchone() is None:
+                return False
+        self.log(reminder_id, occurrence_at, STALE, detail, now)
+        return True
 
     def mark_sent(self, reminder_id: str, occurrence_at: datetime, now: datetime) -> None:
         self._finish(reminder_id, occurrence_at, SENT, None, now)
