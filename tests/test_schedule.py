@@ -6,7 +6,14 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from recordatorios.models import Reminder
-from recordatorios.schedule import monday_of, next_runs, occurrences_between, week_matches
+from recordatorios.schedule import (
+    last_run,
+    monday_of,
+    nearest_run,
+    next_runs,
+    occurrences_between,
+    week_matches,
+)
 
 BOGOTA = "America/Bogota"
 UTC = timezone.utc
@@ -135,3 +142,51 @@ def test_la_hora_local_no_se_mueve_con_el_cambio_de_horario():
 def test_recordatorio_ya_vencido_no_tiene_proximas_ejecuciones():
     r = make(ends_on=date(2020, 1, 1))
     assert next_runs(r, 3, datetime(2026, 8, 1, tzinfo=UTC)) == []
+
+
+# -- mirar hacia atrás -----------------------------------------------------
+
+# Lunes 3 de agosto de 2026, 07:00 en Bogotá (UTC-5).
+LUNES_7AM = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
+# Ese mismo lunes a las 16:34, la hora a la que se descubrió el olvido.
+LUNES_TARDE = datetime(2026, 8, 3, 21, 34, tzinfo=UTC)
+
+
+def test_last_run_devuelve_la_ocurrencia_anterior():
+    assert last_run(make(cron="0 7 * * 1,3"), LUNES_TARDE) == LUNES_7AM
+
+
+def test_last_run_respeta_el_filtro_de_semanas():
+    # Semanas alternas: antes del 14, el último lunes que le tocó es el 3, no
+    # el 10, que le corresponde al otro offset.
+    r = make(every_weeks=2, week_offset=0, anchor=LUNES_ANCHOR)
+    assert last_run(r, datetime(2026, 8, 14, tzinfo=UTC)) == LUNES_7AM
+
+
+def test_last_run_no_se_va_antes_de_starts_on():
+    r = make(starts_on=date(2026, 8, 10))
+    assert last_run(r, datetime(2026, 8, 5, tzinfo=UTC)) is None
+
+
+def test_nearest_run_prefiere_la_de_hoy_si_ya_disparo():
+    # El caso que motivó todo esto: una prueba el lunes por la tarde tiene que
+    # imitar la ocurrencia de las 7:00 de hoy, no la del miércoles.
+    assert nearest_run(make(cron="0 7 * * 1,3"), LUNES_TARDE) == LUNES_7AM
+
+
+def test_nearest_run_mira_adelante_cuando_lo_que_viene_esta_mas_cerca():
+    r = make(cron="0 7 * * 1,3")
+    # Martes a las 16:00: el miércoles queda a ~15 h y el lunes a ~33 h.
+    martes = datetime(2026, 8, 4, 21, 0, tzinfo=UTC)
+    assert nearest_run(r, martes) == datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
+
+
+def test_nearest_run_sin_pasado_devuelve_la_proxima():
+    r = make(starts_on=date(2026, 8, 10))
+    esperada = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+    assert nearest_run(r, datetime(2026, 8, 5, tzinfo=UTC)) == esperada
+
+
+def test_nearest_run_sin_futuro_devuelve_la_ultima():
+    r = make(ends_on=date(2026, 8, 3))
+    assert nearest_run(r, datetime(2026, 8, 20, tzinfo=UTC)) == LUNES_7AM

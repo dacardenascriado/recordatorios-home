@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from recordatorios.config import Settings
-from recordatorios.models import Reminder
+from recordatorios.config import DEFAULT_LOOKBACK_MINUTES, Settings
+from recordatorios.models import DEFAULT_MAX_DELAY_MINUTES, Reminder
 from recordatorios.store import Store
 from recordatorios.tick import run_tick
 
@@ -95,6 +95,13 @@ def test_recupera_un_tick_atrasado(store, settings):
     assert len(sender.enviados) == 1
 
 
+def test_la_ventana_por_defecto_es_mas_ancha_que_el_plazo():
+    # La invariante que hace visible lo vencido. Si fueran iguales, cualquier
+    # ocurrencia pasada de plazo quedaría también fuera de la ventana: el tick
+    # no la vería nunca y el recordatorio se perdería en silencio.
+    assert DEFAULT_LOOKBACK_MINUTES > DEFAULT_MAX_DELAY_MINUTES
+
+
 def test_descarta_lo_que_llega_demasiado_tarde(store, settings):
     # Con un max_delay más corto que la ventana, la ocurrencia entra en el
     # rango pero igual se descarta por vieja.
@@ -105,9 +112,39 @@ def test_descarta_lo_que_llega_demasiado_tarde(store, settings):
 
     assert [o.status for o in resultado.outcomes] == ["skipped_stale"]
     assert sender.enviados == []
-    # Descartar no requiere consultar nada.
-    assert resultado.touched_database is False
-    assert store.connected is False
+    # Descartar sí toca la base: perder un recordatorio sin dejar rastro es el
+    # peor modo de fallo, así que queda anotado.
+    assert resultado.touched_database is True
+    assert [f.status for f in store.history()] == ["stale"]
+
+
+def test_lo_descartado_se_anota_una_sola_vez(store, settings):
+    # La ocurrencia vencida sigue apareciendo en la ventana durante horas: sin
+    # esto, cada tick agregaría una fila y mantendría a Neon despierta.
+    sender = FakeSender()
+    reminder = lunes(max_delay_minutes=30)
+    run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(hours=1))
+
+    resultado = run_tick(
+        [reminder], store, sender, settings, now=OCURRENCIA + timedelta(hours=1, minutes=5)
+    )
+
+    assert [o.status for o in resultado.outcomes] == ["already_handled"]
+    assert len(store.history()) == 1
+
+
+def test_lo_ya_enviado_no_se_marca_despues_como_vencido(store, settings):
+    # Se envió a tiempo, pero la ocurrencia sigue en la ventana hasta pasarse
+    # de plazo. Un 'sent' es definitivo y no lo pisa nadie.
+    sender = FakeSender()
+    reminder = lunes(max_delay_minutes=30)
+    run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(minutes=2))
+
+    resultado = run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(minutes=45))
+
+    assert [o.status for o in resultado.outcomes] == ["already_handled"]
+    assert [f.status for f in store.history()] == ["sent"]
+    assert len(sender.enviados) == 1
 
 
 def test_un_fallo_se_reintenta_en_el_siguiente_tick(store, settings):
@@ -131,6 +168,8 @@ def test_un_fallo_deja_de_reintentarse_al_pasarse_de_max_delay(store, settings):
     resultado = run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(minutes=45))
 
     assert [o.status for o in resultado.outcomes] == ["skipped_stale"]
+    # El intento fallido termina de vencerse y queda registrado como tal.
+    assert [f.status for f in store.history()] == ["stale", "failed"]
 
 
 def test_un_fallo_no_bloquea_a_los_demas(store, settings):

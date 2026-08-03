@@ -12,6 +12,7 @@ from recordatorios.models import Reminder
 from recordatorios.schedule import (
     describe,
     local_str,
+    nearest_run,
     next_runs,
     occurrences_between,
     turn_index,
@@ -246,10 +247,11 @@ def cmd_send_test(args: argparse.Namespace, settings: Settings) -> int:
         )
         return 1
 
-    # Mandamos el turno que corresponde hoy, para ver el mensaje tal cual va a
-    # salir en la próxima ejecución real.
-    proxima = next_runs(reminder, 1)
-    turno = turn_index(reminder, proxima[0]) if proxima and reminder.needs_turn else 0
+    # El turno de la ocurrencia más cercana: la de hoy si ya disparó, y si no
+    # la que viene. Mirar solo hacia adelante hacía que una prueba por la tarde
+    # nombrara a la persona de la vez siguiente, no a la de hoy.
+    momento = nearest_run(reminder)
+    turno = turn_index(reminder, momento) if momento and reminder.needs_turn else 0
 
     sender = TelegramSender(settings.require_token())
     sender.send_message(
@@ -258,8 +260,16 @@ def cmd_send_test(args: argparse.Namespace, settings: Settings) -> int:
         parse_mode=reminder.parse_mode,
         silent=reminder.silent,
     )
+    # Decir qué ocurrencia se imitó: es la forma de notar a tiempo que el
+    # mensaje salió con el turno de otro día.
+    referencia = (
+        local_str(momento, reminder.timezone) if momento else "sin ocurrencia de referencia"
+    )
     quien = reminder.whose_turn(turno)
-    print(f"Enviado '{reminder.id}' a {reminder.chat_id}" + (f" (turno de {quien})." if quien else "."))
+    print(
+        f"Enviado '{reminder.id}' a {reminder.chat_id} — como la ocurrencia "
+        f"del {referencia}" + (f", turno de {quien}." if quien else ".")
+    )
     return 0
 
 

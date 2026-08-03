@@ -16,7 +16,7 @@ import pytest
 from recordatorios.config import ConfigError
 from recordatorios.loader import load_reminders
 from recordatorios.models import Reminder
-from recordatorios.schedule import occurrences_between, turn_index
+from recordatorios.schedule import nearest_run, next_runs, occurrences_between, turn_index
 
 BOGOTA = ZoneInfo("America/Bogota")
 UTC = timezone.utc
@@ -242,6 +242,21 @@ def test_el_aviso_y_el_control_del_mismo_dia_nombran_a_la_misma_persona(manana, 
     # sobre una ocurrencia de las 19:00, que en UTC es medianoche del día
     # siguiente y haría que las dos listas terminen en puntos distintos.
     assert asignaciones(a, dias=20) == asignaciones(b, dias=20)
+
+
+def test_una_prueba_por_la_tarde_nombra_a_quien_le_toco_hoy():
+    # send-test elegía el turno mirando la próxima ejecución, así que una
+    # prueba el lunes por la tarde nombraba a la persona del miércoles.
+    basura = repo_reminders()["basura-lun-mie-manana"]
+    tarde_del_lunes = datetime(2026, 8, 3, 21, 34, tzinfo=UTC)  # 16:34 en Bogotá
+
+    momento = nearest_run(basura, tarde_del_lunes)
+    assert momento.astimezone(BOGOTA).date() == date(2026, 8, 3)
+    assert basura.whose_turn(turn_index(basura, momento)) == ENV_REPO["PERSONA_1"]
+
+    # Y la próxima es de otra persona: por eso la diferencia importaba.
+    siguiente = next_runs(basura, 1, tarde_del_lunes)[0]
+    assert basura.whose_turn(turn_index(basura, siguiente)) == ENV_REPO["PERSONA_2"]
 
 
 def test_el_control_de_la_tarde_llega_despues_del_aviso():

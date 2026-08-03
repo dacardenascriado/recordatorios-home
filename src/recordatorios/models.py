@@ -10,9 +10,10 @@ DEFAULT_ANCHOR = date(1970, 1, 5)
 
 DEFAULT_TIMEZONE = "America/Bogota"
 
-# Por defecto coincide con la ventana de recuperación (TICK_LOOKBACK_MINUTES):
-# o sea, "entregalo mientras la ventana lo alcance". Bajarlo por recordatorio
-# tiene sentido cuando recibirlo tarde no sirve de nada.
+# Cuánto se tolera entregar tarde. Tiene que quedar por debajo de la ventana de
+# recuperación (TICK_LOOKBACK_MINUTES) para que lo vencido todavía se vea y se
+# pueda registrar; el margen entre los dos es lo que hace visible una pérdida.
+# Bajarlo por recordatorio tiene sentido cuando recibirlo tarde no sirve de nada.
 DEFAULT_MAX_DELAY_MINUTES = 120
 
 TURNO = "{turno}"

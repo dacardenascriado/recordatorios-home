@@ -201,8 +201,9 @@ En la pestaña *Actions* → workflow **tick** → *Run workflow*. El desplegabl
 |---|---|
 | `check` | Revisa las cuatro cosas que tienen que estar bien: el YAML, que el token sirva, que el bot alcance cada chat y que la base conecte. Es el diagnóstico completo |
 | `dry-run` | Muestra qué se enviaría en este instante |
+| `history` | Los últimos 50 envíos registrados, con su estado (`sent`, `failed`, `stale`). Es lo que hay que mirar cuando un recordatorio no llegó |
 | `tick` | La corrida normal, igual a la del cron |
-| `send-test` | Manda un recordatorio ya mismo. Poné su `id` en el campo de abajo |
+| `send-test` | Manda un recordatorio ya mismo. Poné su `id` en el campo de abajo. Usa el turno de la ocurrencia más cercana —la de hoy si ya disparó— y te dice cuál imitó |
 
 Empezá por `check`. Si sale todo en `[OK ]`, terminás con `send-test` para ver
 un mensaje real en el grupo. A partir de ahí el tick corre solo cada 5 minutos.
@@ -241,7 +242,7 @@ valida el archivo en cada push, así que un typo no llega a producción.
 | `week_offset` | no | Cuál de esas N semanas (0 … N-1) |
 | `anchor` | no | Fecha del primer turno, y semana 0 para `every_weeks` (para eso se normaliza a su lunes) |
 | `starts_on` / `ends_on` | no | Límites de vigencia (`AAAA-MM-DD`) |
-| `max_delay_minutes` | no | Si queda más atrasado que esto, se descarta en vez de llegar a destiempo. Por defecto 120, igual que la ventana de recuperación; bajalo para recordatorios que tarde no sirven |
+| `max_delay_minutes` | no | Si queda más atrasado que esto, se descarta en vez de llegar a destiempo (y queda anotado como `stale`). Por defecto 120, la mitad de la ventana de recuperación; bajalo para recordatorios que tarde no sirven |
 | `parse_mode` | no | `HTML`, `Markdown`, `MarkdownV2` o `none` |
 | `silent` | no | `true` envía sin notificación sonora |
 
@@ -257,7 +258,7 @@ python -m recordatorios list              # cada recordatorio con sus próximas 
 python -m recordatorios agenda --days 28  # cronología combinada
 python -m recordatorios tick --dry-run    # qué se enviaría ahora mismo
 python -m recordatorios tick              # el envío real (lo que corre en Actions)
-python -m recordatorios send-test --id X  # manda uno a mano, ignorando el horario
+python -m recordatorios send-test --id X  # manda uno a mano, con el turno de la ocurrencia más cercana
 python -m recordatorios history           # últimos envíos registrados
 python -m recordatorios init-db           # crea las tablas
 ```
@@ -285,22 +286,33 @@ GitHub Actions (cada 5 min)
   python -m recordatorios tick
         │
         ├─ lee reminders.yaml               → qué recordatorios existen
-        ├─ calcula la ventana (ahora-2h, ahora]
-        ├─ descarta lo que pasó de max_delay_minutes
+        ├─ calcula la ventana (ahora-4h, ahora]
+        ├─ separa lo vencido (más de max_delay_minutes) de lo pendiente
         │
         ├─ ¿quedó algo? NO  → termina sin conectar a la base   ← ~99% de los ticks
         │
         └─ ¿quedó algo? SÍ  → recién acá conecta a Neon
-              ├─ claim (reminder_id, occurrence_at)
-              │     └─ ¿ya lo tomó otra corrida? → se abstiene
-              └─ POST a la Bot API de Telegram
+              ├─ lo vencido → se anota una vez como 'stale' y no se envía
+              └─ lo pendiente
+                    ├─ claim (reminder_id, occurrence_at)
+                    │     └─ ¿ya lo tomó otra corrida? → se abstiene
+                    └─ POST a la Bot API de Telegram
 ```
 
 Tres decisiones que sostienen todo lo demás:
 
-**Ventanas, no instantes.** El tick procesa el intervalo `(ahora - 2h, ahora]`.
+**Ventanas, no instantes.** El tick procesa el intervalo `(ahora - 4h, ahora]`.
 Un retraso de Actions se recupera en la corrida siguiente en vez de perderse, y
 la ventana es fija: no hay ningún cursor que mantener.
+
+La ventana (4 h) es deliberadamente más ancha que el plazo de entrega
+(`max_delay_minutes`, 2 h), y esa diferencia no es decorativa. Si fueran
+iguales, todo lo que entra en la ventana estaría por definición dentro del
+plazo, y lo que se pasó del plazo ya habría salido de la ventana: el tick no lo
+vería nunca. Un recordatorio perdido por una caída larga de Actions
+desaparecería sin error, sin fila en la base y sin línea en el log. Con el
+margen, la ocurrencia vencida todavía se ve, se descarta a conciencia y queda
+anotada como `stale` — que es como uno se entera de que faltó.
 
 **La clave primaria es la idempotencia.** La tabla `deliveries` tiene
 `PRIMARY KEY (reminder_id, occurrence_at)`. Antes de enviar, el tick inserta esa
@@ -332,20 +344,25 @@ mitad de mes, sin aviso.
 
 Con la conexión perezosa, la base solo despierta cuando un recordatorio vence
 de verdad. Después de cada envío queda encendida durante la ventana de
-recuperación (2 h), porque los ticks de ese rato siguen consultándola para
-confirmar que ya se envió. O sea ~0.5 CU-hours por recordatorio disparado:
-**unas 15 CU-hours al mes con 30 recordatorios**, cómodamente dentro de las 100.
+recuperación (4 h), porque los ticks de ese rato siguen consultándola para
+confirmar que ya se envió. O sea ~1 CU-hour por recordatorio disparado:
+**unas 30 CU-hours al mes con 30 recordatorios**, dentro de las 100.
+
+Ese es el precio de la ventana ancha: con 2 h costaba la mitad, pero era la
+configuración en la que un recordatorio perdido no dejaba rastro. El margen se
+paga en compute y se cobra en poder saber qué pasó.
 
 De ahí salen los dos únicos parámetros que conviene no tocar a la ligera:
 
 | Variable | Por defecto | Efecto de subirlo |
 |---|---|---|
-| `TICK_LOOKBACK_MINUTES` | 120 | Más tolerancia a caídas de Actions, pero más horas de compute por cada envío |
+| `TICK_LOOKBACK_MINUTES` | 240 | Más tolerancia a caídas de Actions, pero más horas de compute por cada envío |
 | `TICK_MAX_WINDOW_HOURS` | 6 | Tope duro de la anterior, para que un error de dedo no vacíe la cuota |
 
 Si algún día tenés muchos recordatorios diarios y te acercás al límite, la
-palanca es bajar `TICK_LOOKBACK_MINUTES` (a 60, por ejemplo): menos margen ante
-caídas largas, la mitad de compute.
+palanca es bajar `TICK_LOOKBACK_MINUTES` (a 180, por ejemplo). Lo que no
+conviene es bajarlo hasta igualar el `max_delay_minutes` de los recordatorios:
+ahí volvés a la configuración en la que las pérdidas son invisibles.
 
 ### Estructura
 

@@ -11,7 +11,14 @@ DEFAULT_REMINDERS_FILE = "reminders.yaml"
 # Ventana de recuperación: cuánto hacia atrás mira cada tick. Define la
 # tolerancia a que GitHub Actions se atrase o se caiga; un hueco más largo que
 # esto pierde los recordatorios que hayan caído dentro.
-DEFAULT_LOOKBACK_MINUTES = 120
+#
+# Tiene que ser MAYOR que el max_delay_minutes de los recordatorios. Si son
+# iguales, toda ocurrencia dentro de la ventana está por definición dentro del
+# plazo, y la que se pasó del plazo ya cayó fuera de la ventana: el tick no la
+# ve nunca y se pierde en silencio, sin fila en la base ni línea en el log. Con
+# la ventana más ancha queda un margen en el que la ocurrencia todavía se ve,
+# se descarta a conciencia y se registra que se perdió.
+DEFAULT_LOOKBACK_MINUTES = 240
 
 # Tope duro de la ventana. Evita que un valor mal puesto reviva recordatorios de
 # hace días y mantenga la base despierta de más.

@@ -33,8 +33,10 @@ defaults:
   chat_id: "${TELEGRAM_CHAT_ID}"
   parse_mode: HTML
   # Si un recordatorio queda más atrasado que esto, se descarta en vez de
-  # llegar a destiempo. Por defecto coincide con la ventana de recuperación
-  # (120 min); bajalo en los recordatorios que no sirven de nada tarde.
+  # llegar a destiempo; bajalo en los recordatorios que no sirven de nada tarde.
+  # Tiene que ser menor que la ventana de recuperación (TICK_LOOKBACK_MINUTES,
+  # 240 min): si fueran iguales, lo vencido caería fuera de la ventana y se
+  # perdería sin quedar registrado en ningún lado.
   max_delay_minutes: 120
 
 reminders:
