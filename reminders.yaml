@@ -52,32 +52,32 @@ reminders:
   #   semana 3  PERSONA_2   PERSONA_3
   #   semana 4  PERSONA_1   PERSONA_2  ← vuelve a empezar
   #
-  # Los dos avisos del mismo día (6am y 6pm) comparten turno: le tocan a la
+  # Los dos avisos del mismo día (5am y 5pm) comparten turno: le tocan a la
   # misma persona. Para que eso funcione, ambos tienen que compartir la misma
   # lista de `rotation`, el mismo `anchor` y los mismos días en el cron.
 
   - id: bano-manana
     name: "Aseo del baño — aviso de la mañana"
-    cron: "0 6 * * 1,4"
+    cron: "0 5 * * 1,4"
     rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
     anchor: 2026-08-03          # el primer turno: lunes 3, PERSONA_1
     message:
       - "🧽 Buenos días, {turno}. El baño amaneció esperándote. No es personal, es el calendario. 📅"
-      - "🚿 {turno}, hoy sos vos. El baño no se limpia solo por más que lo mires con cariño."
-      - "✨ Arriba {turno}: te tocó el turno de dejar el baño digno de una foto. Mañana le toca a otro, hoy la gloria es tuya."
-      - "🧴 {turno}, misión del día: baño impecable. Dificultad: media. Recompensa: {siguiente} te debe una."
-      - "🪣 Se abre la jornada y el destino eligió a {turno}. El baño espera, y no tiene paciencia."
+      - "🚿 {turno}, hoy es tu gran día. El baño no se limpia solo por más que lo mires con cariño."
+      - "✨ Arriba {turno}: te tocó el turno de dejar el baño digno de una foto. La próxima le toca a {siguiente}, hoy la gloria es tuya."
+      - "🧴 {turno}, misión del día: baño impecable. Dificultad: media. Recompensa: {siguiente} se prepara para el próximo turno."
+      - "🧽 Se abre la jornada y el destino eligió a {turno}. El baño espera, y no tiene paciencia."
 
   - id: bano-tarde
     name: "Aseo del baño — control de la tarde"
-    cron: "0 18 * * 1,4"
+    cron: "0 17 * * 1,4"
     rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
     anchor: 2026-08-03          # mismo anchor: comparte el turno con el aviso de la mañana
     message:
-      - "🕕 {turno}, la pregunta del millón: ¿el baño ya quedó limpio? 👀"
-      - "🔍 Control de calidad para {turno}. Si ya lo hiciste, ignorá este mensaje con orgullo."
-      - "⏰ {turno}, se acaba el día y el baño tiene memoria. {siguiente} está tomando nota."
-      - "🧼 Último llamado, {turno}. Después de esto ya no es olvido, es leyenda."
+      - "🕔 {turno}, la pregunta del millón: ¿el baño ya quedó limpio? 👀"
+      - "🔍 Control de calidad para {turno}. Si ya limpiaste el baño, ignorá este mensaje con orgullo."
+      - "⏰ {turno}, se acaba el día y el baño tiene memoria. La próxima le toca a {siguiente}, toma nota."
+      - "🧼 Último llamado por si no haz limpiado el baño, {turno}. Después de esto ya no es olvido, es tragedia."
       - "👏 Si el baño ya brilla, {turno}, tomate el aplauso. Si no… todavía estás a tiempo."
 
   # ======================================================================
@@ -93,23 +93,23 @@ reminders:
   #   semana 3  PERSONA_2   PERSONA_3   PERSONA_4
   #   semana 4  PERSONA_1   PERSONA_2   PERSONA_4  ← vuelve a empezar
   #
-  # Cada grupo tiene aviso a las 7:00 y control a las 19:00. Los dos avisos del
+  # Cada grupo tiene aviso a las 6:00 y control a las 19:00. Los dos avisos del
   # mismo día comparten turno porque comparten rotation, anchor y días de cron.
   #
   # Si algún día PERSONA_4 puede otros días, se borran los dos basura-viernes-*
-  # y se la agrega a las listas de acá abajo con el cron "0 7 * * 1,3,5".
+  # y se la agrega a las listas de acá abajo con el cron "0 6 * * 1,3,5".
 
   - id: basura-lun-mie-manana
     name: "Basura lun/mié — aviso de la mañana"
-    cron: "0 7 * * 1,3"
+    cron: "0 6 * * 1,3"
     rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
     anchor: 2026-08-03          # lunes 3: PERSONA_1
     message:
       - "🗑️ El calendario no miente: hoy le toca a {turno} demostrar su talento sacando la basura. 👏"
-      - "🗑️ {turno}, la basura tiene una cita con la calle y vos sos el chofer. La próxima le toca a {siguiente}."
-      - "♻️ Turno de {turno}. Es sacar una bolsa, no escalar el Everest. Vos podés. 💪"
-      - "🚛 {turno}, el camión no espera y {siguiente} está mirando. Que no se diga."
-      - "🌅 Buenos días. Hoy la humanidad no necesita héroes, necesita que {turno} saque la basura."
+      - "🗑️ {turno}, la basura tiene una cita con la calle y eres tú el chofer para que esa cita se cumpla. 💪 La próxima vez le toca a {siguiente}, así que ve calentando motores para tu turno. 🗑️"
+      - "♻️ Hoy el turno de sacar la basura es de {turno}. ¡Ánimo! 💪 Es solo sacar una bolsa, no escalar el Everest. 🗑️🏔️ Confiamos en que puedes lograr esta misión. 😎"
+      - "🚛 {turno}, el camión de la basura no espera, saca la basura por favor, y 💪 La próxima vez le toca a {siguiente}, así que ve calentando motores para tu turno. 🗑️. Que no se diga."
+      - "🌅 Buenos días people. Hoy la humanidad no necesita héroes, necesita que {turno} saque la basura."
 
   - id: basura-lun-mie-tarde
     name: "Basura lun/mié — control de la tarde"
@@ -118,30 +118,136 @@ reminders:
     anchor: 2026-08-03          # mismo anchor y mismos días: comparte turno con la mañana
     message:
       - "🌙 {turno}, momento de la verdad: ¿la basura salió, o sigue esperando en la cocina? 👀"
-      - "🕖 Control de calidad. Si ya la sacaste, {turno}, tomate el aplauso. Si no, todavía hay tiempo."
-      - "😤 Si la bolsa sigue en la cocina, {turno}, ya no es basura: es un inquilino más."
-      - "📋 Reporte del día: la misión era de {turno}. {siguiente} está tomando nota para su turno."
-      - "🚛 {turno}, el camión ya pasó. La pregunta incómoda es si encontró algo tuyo en la puerta."
+      - "🕖 Control de calidad.{turno}: Si ya sacaste la basura, ¡excelente! 👏 Si no, ¡ánimo! Todos confiamos en que puedes cumplir con la misión de sacar la basura. 🗑️💪"
+      - "😤 Si la bolsa sigue en la cocina, {turno}, ya no es basura: ¡es un inquilino más! 🗑️😂 Por favor, saca la bolsa de basura, que ese inquilino no paga arriendo. 🏠💸"
+      - "📋 Reporte del día: La misión era de {turno}. 💪 La próxima vez le toca a {siguiente}, así que ve calentando motores para tu turno. 🗑️"
+      - "🚛 {turno}, ¿el camión de la basura ya pasó? 👀 La pregunta incómoda es: ¿encontró algo tuyo esperándolo en la puerta? 🗑️😂"
 
   - id: basura-viernes-manana
     name: "Basura viernes — aviso de la mañana"
-    cron: "0 7 * * 5"
+    cron: "0 6 * * 5"
     anchor: 2026-08-03          # necesario porque hay varios mensajes rotando
     message:
-      - "🗑️ Viernes, o sea: ${PERSONA_4} y la basura, su cita semanal. 👏"
-      - "♻️ ${PERSONA_4}, cerrás la semana como siempre: sacando la basura. Gracias por tanto. 🙌"
-      - "🚛 Es viernes y la basura ya sabe a quién esperar. Todo tuyo, ${PERSONA_4}."
-      - "🌅 Viernes de ${PERSONA_4}. La casa entera confía en vos y en esa bolsa. 💪"
+      - "🗑️ Como hoy es viernes, o sea: ${PERSONA_4} y la basura, su cita semanal. 👏"
+      - "♻️ ${PERSONA_4}, cierra la semana como siempre: sacando la basura. Gracias por tanto. 🙌"
+      - "🚛 Es viernes y la basura ya sabe a quién esperar para que la saque. Animo ${PERSONA_4} la tarea es toda tuya."
+      - "🌅 ${PERSONA_4} llegó el gran día, viernes. La casa entera confía en ti, saca la bolsa de basura por favor. 💪"
 
   - id: basura-viernes-tarde
     name: "Basura viernes — control de la tarde"
     cron: "0 19 * * 5"
     anchor: 2026-08-03
     message:
-      - "🌙 ${PERSONA_4}, ¿la basura del viernes ya voló? Cerrar la semana limpio no tiene precio."
-      - "🕖 Control de viernes, ${PERSONA_4}: decinos que la bolsa ya no está en la cocina y arrancamos el finde tranquilos. 🙏"
+      - "🌙 ${PERSONA_4}, ¿la basura del viernes ya voló? Cerrar la semana con la casa limpia no tiene precio."
+      - "🕖 Control del viernes, ${PERSONA_4}: Nos confirmas por favor que la bolsa ya no está en la cocina? Para arrancar el finde tranquilos. 🙏"
       - "🎉 El fin de semana empieza oficialmente cuando la basura sale. ¿Ya arrancó, ${PERSONA_4}?"
-      - "👀 ${PERSONA_4}, la cocina y yo estamos mirando la misma bolsa. ¿O ya no?"
+      - "👀 ${PERSONA_4}, la cocina y yo estamos mirando la misma bolsa de basura. ¿O ya no?"
+
+  # ======================================================================
+  # ALMUERZO — se cocina un día antes
+  # ======================================================================
+  # El almuerzo se prepara la noche anterior: lo que se cocina el lunes es el
+  # almuerzo que se lleva al trabajo el martes. Por eso la cantidad NO depende
+  # del día en que se cocina sino del día siguiente:
+  #
+  #   entre semana (mar a vie) → 3 personas → 1 bolsa de carne de 1 libra
+  #   fin de semana (sáb, dom) → 4 personas → 1 bolsa de carne de libra y media
+  #
+  # Y por eso los dos grupos de acá abajo no son "semana" y "fin de semana"
+  # según el día de cocinar, sino según el almuerzo que producen:
+  #
+  #   día de cocinar   quién       almuerzo de   personas   bolsa
+  #   lunes            PERSONA_3   martes        3          1 libra
+  #   martes           PERSONA_1   miércoles     3          1 libra
+  #   miércoles        PERSONA_2   jueves        3          1 libra
+  #   jueves           PERSONA_1   viernes       3          1 libra
+  #   domingo          PERSONA_4   lunes         3          1 libra
+  #   viernes          PERSONA_3   sábado        4          libra y media
+  #   sábado           PERSONA_2   domingo       4          libra y media
+  #
+  # Ojo con los dos que se salen de la intuición: el VIERNES se cocina para 4
+  # (es el almuerzo del sábado) y el DOMINGO para 3 (es el del lunes).
+  #
+  # El aviso de las 9:00 es para sacar la carne del congelador y que se vaya
+  # descongelando; el de las 18:00 es para cocinar. Los dos comparten rotation
+  # y anchor, así que le llegan a la misma persona.
+  #
+  # Todos los mensajes preguntan si quedó comida del día anterior en la nevera
+  # —no lo dan por hecho, no siempre sobra— y piden usarla para completar el
+  # almuerzo cuando la haya, así no se desperdicia.
+
+  # ----------------------------------------------------------------------
+  # Almuerzos de entre semana (3 personas, 1 libra) — se cocinan lun a jue
+  # y domingo. La rotación tiene un turno por día de disparo y los días de
+  # cron son 5, así que la lista de 5 nombres fija el día ↔ persona: eso es
+  # a propósito. El orden de la lista es el orden en que caen los días desde
+  # el anchor: lunes, martes, miércoles, jueves, domingo.
+  #
+  # El texto sale del mismo número de turno, así que la cantidad de mensajes
+  # tiene que ser coprima con la de nombres; si no, cada día repetiría siempre
+  # el mismo texto. Con 5 nombres y 6 mensajes el ciclo dura 30 disparos.
+  # ----------------------------------------------------------------------
+
+  - id: almuerzo-semana-manana
+    name: "Almuerzo de entre semana — saca la carne del congelador"
+    cron: "0 9 * * 0,1,2,3,4"    # lun, mar, mié, jue y dom (0 = domingo)
+    rotation: ["${PERSONA_3}", "${PERSONA_1}", "${PERSONA_2}", "${PERSONA_1}", "${PERSONA_4}"]
+    anchor: 2026-08-17          # lunes 17: PERSONA_3
+    starts_on: 2026-08-17       # antes del anchor todo caería en el turno 0
+    message:
+      - "🌅 ¡Buenos días, {turno}! Hoy te toca preparar el almuerzo de <b>mañana</b>. 🍳🍗 🧊 Saca del congelador <b>1 bolsa de carne de 1 libra</b> para que se vaya descongelando. Son <b>3 personas</b>. 🥡 ¿Quedó comida de ayer en la nevera? Si hay, úsala para completar y no se desperdicia nada. ¡Confiamos en ti! 😏"
+      - "☀️ {turno}, hoy cocinas tú… pero para mañana. 😂 🧊 <b>Del congelador: 1 bolsa de carne de 1 libra</b> para <b>3 personas</b>. 🥡 ¿Revisaste la nevera? Si sobró algo de ayer, úsalo para completar y así no se bota nada. 👨‍🍳"
+      - "🍳 ¡{turno}! Misión de hoy: el almuerzo que <b>mañana</b> se lleva al trabajo. 🫡 🧊 <b>Saca del congelador 1 bolsa de carne de 1 libra</b> — son <b>3 personas</b>. 🥡 Y échale un ojo a la nevera: ¿quedó comida de ayer? Si hay, va como complemento y nada se desperdicia. 😂"
+      - "🌅 {turno}, hoy cocinas para <b>mañana</b>. ✨ 🧊 <b>1 bolsa de carne de 1 libra</b>, del congelador, para <b>3 personas</b>. Sácala temprano, que la carne congelada no perdona. 🥡 ¿Hay algo de ayer en la nevera? Si sí, complementa el almuerzo con eso. 💪"
+      - "📋 Reporte de la mañana: hoy cocina {turno}, y ese almuerzo es el de <b>mañana</b>. 🍲 🧊 <b>Del congelador: 1 bolsa de carne de 1 libra</b> para <b>3 personas</b>. 🥡 ¿Quedó algo de ayer en la nevera? Si hay, úsalo para completar. Que no se diga que faltó comida… ni que sobró para la basura. 😂"
+      - "🍗 {turno}, el almuerzo de <b>mañana</b> depende de ti. 🧊 <b>Saca del congelador 1 bolsa de carne de 1 libra</b> — son <b>3 personas</b>. 🥡 Primero, ¿quedó comida de ayer en la nevera? Si hay, se aprovecha y no se bota. Después déjala descongelando y listo. 🙌"
+
+  - id: almuerzo-semana-tarde
+    name: "Almuerzo de entre semana — hora de cocinar"
+    cron: "0 18 * * 0,1,2,3,4"   # mismos días que el aviso de la mañana
+    rotation: ["${PERSONA_3}", "${PERSONA_1}", "${PERSONA_2}", "${PERSONA_1}", "${PERSONA_4}"]
+    anchor: 2026-08-17          # mismo anchor y mismos días: comparte turno con la mañana
+    starts_on: 2026-08-17
+    message:
+      - "🔥 {turno}, llegó la hora: a cocinar el almuerzo de <b>mañana</b>. 👨‍🍳 🍗 <b>1 bolsa de carne de 1 libra</b> para <b>3 personas</b>. 🥡 ¿Quedó algo de ayer en la nevera? Si hay, completa con eso. ¡A darle! 🍳"
+      - "⏰ {turno}, la carne ya debería estar descongelada. 👀 🍲 A preparar el almuerzo de <b>mañana</b>: <b>1 libra, 3 personas.</b> 🥡 ¿Sobró algo de ayer? Si sigue en la nevera, va al plato y no a la caneca. ¡Manos a la obra! 😂"
+      - "🍲 <b>{turno}, comienza la operación almuerzo.</b> Lo de hoy se come <b>mañana</b>, y son <b>3 personas</b>. 🍗 <b>1 bolsa de carne de 1 libra.</b> 🥡 Antes de empezar: ¿quedó algo de ayer? Si hay, aprovéchalo. 👨‍🍳"
+      - "🔔 Recordatorio culinario para {turno}: el almuerzo de <b>mañana</b> se cocina hoy. 🍗 <b>1 bolsa de carne de 1 libra — 3 personas.</b> 🥡 ¿Y sobró algo de ayer? Si sí, se suma y no se bota. ¡Que quede rico! 😎🔥"
+      - "👀 {turno}, pregunta importante: ¿ya empezaste el almuerzo de <b>mañana</b> o todavía estás negociando con la cocina? 😂 🍲 <b>1 libra, 3 personas.</b> 🥡 ¿Revisaste la nevera? Si quedó algo de ayer, completa el plato con eso."
+      - "🕕 {turno}, si la carne sigue en el congelador la cosa se puso interesante. 😅 🍳 Almuerzo de <b>mañana</b>: <b>1 bolsa de carne de 1 libra</b> para <b>3 personas</b>. 🥡 ¿Y quedó algo de ayer en la nevera? Si hay, aprovéchalo."
+
+  # ----------------------------------------------------------------------
+  # Almuerzos del fin de semana (4 personas, libra y media) — se cocinan el
+  # viernes (para el sábado) y el sábado (para el domingo). 2 nombres y 5
+  # mensajes: ciclo de 10 disparos antes de repetir la misma combinación.
+  # Con 4 mensajes, el viernes solo vería los textos 1 y 3.
+  # ----------------------------------------------------------------------
+
+  - id: almuerzo-fin-semana-manana
+    name: "Almuerzo del fin de semana — saca la carne del congelador"
+    cron: "0 9 * * 5,6"          # viernes y sábado
+    rotation: ["${PERSONA_3}", "${PERSONA_2}"]
+    anchor: 2026-08-21          # viernes 21: PERSONA_3 cocina el almuerzo del sábado
+    starts_on: 2026-08-21       # sin esto, los días previos al anchor caen todos en el turno 0
+    message:
+      - "🌅 ¡Buenos días, {turno}! Hoy preparas el almuerzo de <b>mañana</b>, y mañana somos <b>4 personas</b>. 🍳🍗 🧊 <b>Saca del congelador 1 bolsa de carne de libra y media.</b> 🥡 ¿Quedó comida de ayer en la nevera? Si hay, complétalo con eso. ¡Que alcance para todos! 👨‍🍳🔥"
+      - "☀️ {turno}, hoy la olla viene con pasajeros extra: el almuerzo de <b>mañana</b> es para <b>4</b>. 😂 🧊 <b>Del congelador: 1 bolsa de carne de libra y media.</b> 🥡 ¿Sobró algo de ayer? Si hay, entra al plato y no a la basura."
+      - "🍲 Buenos días, {turno}. <b>Mañana</b> somos 4 en la mesa, así que hoy toca un poquito más de carne. 🧊 <b>Saca del congelador 1 bolsa de libra y media.</b> 🥡 ¿Hay comida de ayer en la nevera? Si sí, ayuda a completar. 💪"
+      - "🌅 {turno}, hoy cocinas para <b>mañana</b> y para <b>4 personas</b>. 😂 🧊 <b>Saca del congelador 1 bolsa de carne de libra y media.</b> 🥡 Antes, un vistazo a la nevera: ¿quedó algo de ayer? Si hay, se aprovecha. ¡Confiamos en tus poderes culinarios! 👨‍🍳"
+      - "🍗 Buenos días, {turno}. <b>Mañana</b> la mesa se llena: <b>4 personas</b>. 🧊 <b>Del congelador sale 1 bolsa de carne de libra y media</b>, ni más ni menos. 🥡 ¿Y hay comida de ayer en la nevera? Si sí, úsala para completar. 😎"
+
+  - id: almuerzo-fin-semana-tarde
+    name: "Almuerzo del fin de semana — hora de cocinar"
+    cron: "0 18 * * 5,6"         # mismos días que el aviso de la mañana
+    rotation: ["${PERSONA_3}", "${PERSONA_2}"]
+    anchor: 2026-08-21          # mismo anchor y mismos días: comparte turno con la mañana
+    starts_on: 2026-08-21
+    message:
+      - "🔥 {turno}, a cocinar: el almuerzo de <b>mañana</b> es para <b>4 personas</b>. 🍗 <b>1 bolsa de carne de libra y media.</b> 🥡 ¿Quedó algo de ayer en la nevera? Si hay, completa con eso. ¡Manos a la obra, chef! 👨‍🍳"
+      - "⏰ {turno}, la carne ya debería estar lista para la olla. 👀 🍲 Almuerzo de <b>mañana</b>: <b>libra y media, 4 personas.</b> 🥡 ¿Sobró algo de ayer? Si sigue en la nevera, va al plato y no a la caneca. ¡Que alcance para todos! 😂"
+      - "🍳 <b>{turno}, operación almuerzo activada.</b> <b>Mañana</b> hay 4 comensales esperando. 🍗 <b>1 bolsa de carne de libra y media.</b> 🥡 ¿Revisaste la nevera? Si quedó algo de ayer, aprovéchalo. ¡Éxitos, chef! 👨‍🍳"
+      - "🔔 Recordatorio para {turno}: el almuerzo de <b>mañana</b> se cocina hoy, y somos <b>4</b>. 🤖😂 🍗 <b>1 bolsa de carne de libra y media.</b> 🥡 ¿Y sobró algo de ayer? Si sí, se suma y no se bota."
+      - "🕕 {turno}, ¿la carne salió del congelador a tiempo? 👀 🍲 Almuerzo de <b>mañana</b> para <b>4 personas</b>: <b>1 bolsa de libra y media.</b> 🥡 ¿Quedó algo de ayer? Si hay, completa con eso y que nadie se quede con hambre… ni la caneca con comida. 😂"
 
   # ======================================================================
   # OTROS
