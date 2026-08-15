@@ -259,12 +259,85 @@ def test_una_prueba_por_la_tarde_nombra_a_quien_le_toco_hoy():
     assert basura.whose_turn(turn_index(basura, siguiente)) == ENV_REPO["PERSONA_2"]
 
 
+# Los almuerzos no son una ronda entre personas: cada día de la semana tiene
+# cocinero fijo, y lo que fija el día es la POSICIÓN dentro de 'rotation' (el
+# turno avanza un puesto por día de disparo desde el anchor). Por eso reordenar
+# esa lista no rompe nada visible, solo corre a todo el mundo de día. El mapeo
+# va acá para que ese corrimiento falle en CI.
+#
+# La clave es el día de COCINAR; el almuerzo que produce es el del día
+# siguiente, que es de donde salen las cantidades.
+COCINERO_POR_DIA = {
+    0: "PERSONA_3",  # lunes     → almuerzo del martes    (3 personas)
+    1: "PERSONA_1",  # martes    → almuerzo del miércoles (3 personas)
+    2: "PERSONA_1",  # miércoles → almuerzo del jueves    (3 personas)
+    3: "PERSONA_3",  # jueves    → almuerzo del viernes   (3 personas)
+    4: "PERSONA_2",  # viernes   → almuerzo del sábado    (4 personas)
+    5: "PERSONA_2",  # sábado    → almuerzo del domingo   (4 personas)
+    6: "PERSONA_4",  # domingo   → almuerzo del lunes     (3 personas)
+}
+
+# Los dos grupos arrancan en su starts_on (17 y 21 de agosto), así que la
+# ventana tiene que pasarse de largo para probar algo: con 35 días desde el 1
+# de agosto cada uno da más de dos vueltas completas. Que sea múltiplo de 7 no
+# molesta acá —a diferencia de la basura de las 19:00— porque las 9:00 y las
+# 18:00 de Bogotá son las 14:00 y las 23:00 UTC, del mismo día, y el borde de
+# la ventana nunca parte un par aviso/control.
+DIAS_ALMUERZO = 35
+
+ALMUERZOS = [
+    ("almuerzo-semana-manana", "almuerzo-semana-tarde"),
+    ("almuerzo-fin-semana-manana", "almuerzo-fin-semana-tarde"),
+]
+
+
+@pytest.mark.parametrize(("manana", "tarde"), ALMUERZOS)
+def test_cada_dia_de_almuerzo_es_siempre_del_mismo_cocinero(manana, tarde):
+    por_id = repo_reminders()
+
+    for reminder in (por_id[manana], por_id[tarde]):
+        vistos = asignaciones(reminder, dias=DIAS_ALMUERZO)
+        assert vistos, f"{reminder.id}: la ventana quedó antes de starts_on"
+        for fecha, quien in vistos:
+            esperado = ENV_REPO[COCINERO_POR_DIA[fecha.weekday()]]
+            assert quien == esperado, f"{reminder.id}: el {fecha} le tocó a {quien}"
+
+    # Y el aviso de las 9:00 y el de las 18:00 nombran al mismo, como en el
+    # resto de recordatorios: comparten rotation, anchor y días de cron.
+    assert asignaciones(por_id[manana], dias=DIAS_ALMUERZO) == asignaciones(
+        por_id[tarde], dias=DIAS_ALMUERZO
+    )
+
+
+def test_los_almuerzos_se_reparten_los_siete_dias_sin_repetir():
+    # La cantidad de carne sale del grupo, no del día: si un día se pasara de
+    # grupo se cocinaría para 3 cuando son 4, o al revés. Y si un día quedara
+    # en los dos grupos, o en ninguno, ese almuerzo se cocina dos veces o no se
+    # cocina.
+    por_id = repo_reminders()
+    entre_semana = {
+        fecha.weekday()
+        for fecha, _ in asignaciones(por_id["almuerzo-semana-manana"], dias=DIAS_ALMUERZO)
+    }
+    fin_de_semana = {
+        fecha.weekday()
+        for fecha, _ in asignaciones(por_id["almuerzo-fin-semana-manana"], dias=DIAS_ALMUERZO)
+    }
+
+    # 3 personas y 1 libra: lun, mar, mié, jue y dom. El domingo entra acá
+    # aunque suene raro, porque produce el almuerzo del lunes.
+    assert entre_semana == {0, 1, 2, 3, 6}
+    # 4 personas y libra y media: vie y sáb.
+    assert fin_de_semana == {4, 5}
+
+
 def test_el_control_de_la_tarde_llega_despues_del_aviso():
     por_id = repo_reminders()
     for manana, tarde in [
         ("bano-manana", "bano-tarde"),
         ("basura-lun-mie-manana", "basura-lun-mie-tarde"),
         ("basura-viernes-manana", "basura-viernes-tarde"),
+        *ALMUERZOS,
     ]:
         hora_aviso = int(por_id[manana].cron.split()[1])
         hora_control = int(por_id[tarde].cron.split()[1])
