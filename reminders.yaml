@@ -159,10 +159,10 @@ reminders:
   #   día de cocinar   quién       almuerzo de   personas   bolsa
   #   lunes            PERSONA_3   martes        3          1 libra
   #   martes           PERSONA_1   miércoles     3          1 libra
-  #   miércoles        PERSONA_2   jueves        3          1 libra
-  #   jueves           PERSONA_1   viernes       3          1 libra
+  #   miércoles        PERSONA_1   jueves        3          1 libra
+  #   jueves           PERSONA_3   viernes       3          1 libra
   #   domingo          PERSONA_4   lunes         3          1 libra
-  #   viernes          PERSONA_3   sábado        4          libra y media
+  #   viernes          PERSONA_2   sábado        4          libra y media
   #   sábado           PERSONA_2   domingo       4          libra y media
   #
   # Ojo con los dos que se salen de la intuición: el VIERNES se cocina para 4
@@ -191,7 +191,7 @@ reminders:
   - id: almuerzo-semana-manana
     name: "Almuerzo de entre semana — saca la carne del congelador"
     cron: "0 9 * * 0,1,2,3,4"    # lun, mar, mié, jue y dom (0 = domingo)
-    rotation: ["${PERSONA_3}", "${PERSONA_1}", "${PERSONA_2}", "${PERSONA_1}", "${PERSONA_4}"]
+    rotation: ["${PERSONA_3}", "${PERSONA_1}", "${PERSONA_1}", "${PERSONA_3}", "${PERSONA_4}"]
     anchor: 2026-08-17          # lunes 17: PERSONA_3
     starts_on: 2026-08-17       # antes del anchor todo caería en el turno 0
     message:
@@ -205,7 +205,7 @@ reminders:
   - id: almuerzo-semana-tarde
     name: "Almuerzo de entre semana — hora de cocinar"
     cron: "0 18 * * 0,1,2,3,4"   # mismos días que el aviso de la mañana
-    rotation: ["${PERSONA_3}", "${PERSONA_1}", "${PERSONA_2}", "${PERSONA_1}", "${PERSONA_4}"]
+    rotation: ["${PERSONA_3}", "${PERSONA_1}", "${PERSONA_1}", "${PERSONA_3}", "${PERSONA_4}"]
     anchor: 2026-08-17          # mismo anchor y mismos días: comparte turno con la mañana
     starts_on: 2026-08-17
     message:
@@ -218,16 +218,18 @@ reminders:
 
   # ----------------------------------------------------------------------
   # Almuerzos del fin de semana (4 personas, libra y media) — se cocinan el
-  # viernes (para el sábado) y el sábado (para el domingo). 2 nombres y 5
-  # mensajes: ciclo de 10 disparos antes de repetir la misma combinación.
-  # Con 4 mensajes, el viernes solo vería los textos 1 y 3.
+  # viernes (para el sábado) y el sábado (para el domingo). Los dos días le
+  # tocan a PERSONA_2, así que el nombre aparece repetido en la rotación: la
+  # lista sigue teniendo una posición por día de disparo (viernes, sábado).
+  # 2 posiciones y 5 mensajes: ciclo de 10 disparos antes de repetir la misma
+  # combinación. Con 4 mensajes, el viernes solo vería los textos 1 y 3.
   # ----------------------------------------------------------------------
 
   - id: almuerzo-fin-semana-manana
     name: "Almuerzo del fin de semana — saca la carne del congelador"
     cron: "0 9 * * 5,6"          # viernes y sábado
-    rotation: ["${PERSONA_3}", "${PERSONA_2}"]
-    anchor: 2026-08-21          # viernes 21: PERSONA_3 cocina el almuerzo del sábado
+    rotation: ["${PERSONA_2}", "${PERSONA_2}"]
+    anchor: 2026-08-21          # viernes 21: PERSONA_2 cocina el almuerzo del sábado
     starts_on: 2026-08-21       # sin esto, los días previos al anchor caen todos en el turno 0
     message:
       - "🌅 ¡Buenos días, {turno}! Hoy preparas el almuerzo de <b>mañana</b>, y mañana somos <b>4 personas</b>. 🍳🍗 🧊 <b>Saca del congelador 1 bolsa de carne de libra y media.</b> 🥡 ¿Quedó comida de ayer en la nevera? Si hay, complétalo con eso. ¡Que alcance para todos! 👨‍🍳🔥"
@@ -239,7 +241,7 @@ reminders:
   - id: almuerzo-fin-semana-tarde
     name: "Almuerzo del fin de semana — hora de cocinar"
     cron: "0 18 * * 5,6"         # mismos días que el aviso de la mañana
-    rotation: ["${PERSONA_3}", "${PERSONA_2}"]
+    rotation: ["${PERSONA_2}", "${PERSONA_2}"]
     anchor: 2026-08-21          # mismo anchor y mismos días: comparte turno con la mañana
     starts_on: 2026-08-21
     message:
