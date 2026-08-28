@@ -13,7 +13,14 @@ from pathlib import Path
 
 import pytest
 
-from recordatorios.dashboard import ENVIADO, EN_CURSO, PERDIDO, VENCIDO, construir
+from recordatorios.dashboard import (
+    DESCARTADO,
+    ENVIADO,
+    EN_CURSO,
+    PERDIDO,
+    VENCIDO,
+    construir,
+)
 from recordatorios.render import render
 from recordatorios.models import Reminder
 from recordatorios.store import Store
@@ -127,17 +134,59 @@ def test_la_pagina_no_carga_recursos_externos(store):
     assert 'href="http' not in html
 
 
-def test_el_unico_enlace_externo_es_el_de_reenviar(store):
+def test_lo_de_hoy_se_puede_reenviar(store):
+    # Mismo día: el recordatorio todavía le puede servir a alguien.
     reminder = semanal(max_delay_minutes=30)
-    resumen = construir([reminder], store, now=LUNES + timedelta(days=1))
+    resumen = construir([reminder], store, now=LUNES + timedelta(hours=2))
     assert resumen.problemas, "el caso de prueba necesita un problema"
 
     html = render(resumen, repo="usuario/repo")
 
+    assert "Mandarlo ahora" in html
+    assert "Descartar" not in html
     assert "https://github.com/usuario/repo/actions/workflows/tick.yml" in html
     assert 'rel="noopener"' in html
     # El id va en el botón de copiar: GitHub no admite prellenar el input.
     assert 'data-copiar="basura"' in html
+
+
+def test_lo_de_dias_anteriores_solo_se_puede_descartar(store):
+    # Mandar el aviso del baño del jueves un sábado no le sirve a nadie, y un
+    # botón que invita a hacerlo es peor que no tener botón.
+    reminder = semanal(max_delay_minutes=30)
+    resumen = construir([reminder], store, now=LUNES + timedelta(days=2))
+
+    html = render(resumen, repo="usuario/repo")
+
+    assert "Descartar" in html
+    assert "Mandarlo ahora" not in html
+    # Descartar necesita la ocurrencia exacta, no solo el recordatorio.
+    assert 'data-copiar="basura@2026-08-03T12:00:00+00:00"' in html
+
+
+def test_lo_descartado_deja_de_ser_un_problema(store):
+    # La pérdida sigue en el historial, pero deja de pedir acción: una alarma
+    # que no se puede apagar se termina ignorando.
+    reminder = semanal(max_delay_minutes=30)
+    store.dismiss("basura", LUNES, LUNES + timedelta(days=2))
+
+    resumen = construir([reminder], store, now=LUNES + timedelta(days=2))
+
+    assert [f.estado for f in resumen.pasado] == [DESCARTADO]
+    assert resumen.problemas == []
+    assert resumen.salud == "al día"
+
+
+def test_descartar_no_puede_falsear_un_envio(store):
+    # Descartar es para lo que no salió. Pisar un 'sent' convertiría el
+    # historial en una mentira.
+    store.claim("basura", LUNES, LUNES)
+    store.mark_sent("basura", LUNES, LUNES + timedelta(minutes=2))
+
+    assert store.dismiss("basura", LUNES, LUNES + timedelta(days=1)) is False
+
+    resumen = construir([semanal()], store, now=LUNES + timedelta(days=1))
+    assert [f.estado for f in resumen.pasado] == [ENVIADO]
 
 
 def test_sin_repo_no_hay_botones(store):
@@ -158,3 +207,16 @@ def test_el_futuro_no_se_pasa_del_horizonte(store):
 
     assert resumen.futuro
     assert all(cuando <= LUNES + timedelta(days=14) for _, cuando in resumen.futuro)
+
+
+def test_la_leyenda_solo_nombra_lo_que_esta_en_pantalla(store):
+    # Una entrada de leyenda para un estado que no aparece es ruido. Se busca la
+    # marca de la leyenda y no la palabra suelta, que también vive en el CSS.
+    entrada = "</i>descartado</span>"
+
+    sin = render(construir([semanal()], store, now=LUNES + timedelta(days=1)))
+    assert entrada not in sin
+
+    store.dismiss("basura", LUNES, LUNES + timedelta(days=1))
+    con = render(construir([semanal()], store, now=LUNES + timedelta(days=1)))
+    assert entrada in con

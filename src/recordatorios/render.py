@@ -25,10 +25,10 @@ from __future__ import annotations
 
 import html
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from recordatorios.dashboard import Fila, Resumen
+from recordatorios.dashboard import DESCARTADO, Fila, Resumen
 
 DIAS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 
@@ -91,6 +91,7 @@ h1{
 .marca.enviado{background:var(--ok)}
 .marca.en-curso{background:var(--warn)}
 .marca.perdido,.marca.vencido,.marca.fallido{background:var(--bad)}
+.marca.descartado{background:var(--line); border:1px solid var(--ink-soft); opacity:.55}
 .leyenda{
   display:flex; flex-wrap:wrap; gap:.4rem 1.1rem; margin:.9rem 0 0;
   font-size:.75rem; color:var(--ink-soft);
@@ -123,6 +124,8 @@ h2{
 .btn-primario{background:var(--brand); border-color:var(--brand); color:#fff}
 @media (prefers-color-scheme:dark){ .btn-primario{color:#0d1412} }
 .btn-primario:hover{filter:brightness(1.08)}
+.btn-descartar{border-color:var(--bad); color:var(--bad)}
+.btn-descartar:hover{background:var(--bad); border-color:var(--bad); color:var(--surface)}
 .btn:focus-visible,.marca:focus-visible{outline:2px solid var(--brand); outline-offset:2px}
 .pista{font-size:.8125rem; color:var(--ink-soft); margin:.7rem 0 0}
 .sano{
@@ -144,6 +147,7 @@ td.t,td.id{font-family:var(--mono); white-space:nowrap}
 .etiqueta.enviado{color:var(--ok)}
 .etiqueta.en-curso{color:var(--warn)}
 .etiqueta.perdido,.etiqueta.vencido,.etiqueta.fallido{color:var(--bad)}
+.etiqueta.descartado{color:var(--ink-soft)}
 
 /* Bajo 640px una tabla obliga a hacer scroll lateral para leer una fila.
    Cada fila pasa a ser una ficha: se lee de arriba abajo, como el pulgar. */
@@ -193,7 +197,7 @@ def render(resumen: Resumen, tz_name: str = "America/Bogota", repo: str | None =
         f"<style>{CSS}</style>\n</head>\n<body>\n<main>\n"
         f"{_encabezado(resumen, problemas, veredicto)}"
         f"{_tira(resumen, tz)}"
-        f"{_problemas(problemas, hora, repo)}"
+        f"{_problemas(problemas, hora, repo, resumen.generado_at.astimezone(tz).date(), tz)}"
         f"{_historia(resumen, hora)}"
         f"{_futuro(resumen, hora)}"
         f"{_pie(tz_name, resumen, hora)}"
@@ -242,9 +246,14 @@ def _tira(resumen: Resumen, tz: ZoneInfo) -> str:
         for etiqueta, filas in por_dia.items()
     )
 
+    claves = [("salió", "ok"), ("en camino", "warn"), ("no salió", "bad")]
+    # La leyenda solo nombra lo que de verdad está en pantalla: una entrada para
+    # un estado que no aparece es ruido.
+    if any(f.estado == DESCARTADO for f in resumen.pasado):
+        claves.append(("descartado", "line"))
     leyenda = "".join(
         f'<span><i class="punto" style="background:var(--{v})"></i>{t}</span>'
-        for t, v in [("salió", "ok"), ("en camino", "warn"), ("no salió", "bad")]
+        for t, v in claves
     )
     return (
         f'  <div class="tira">\n    <div class="dias">\n{dias}\n    </div>\n'
@@ -252,7 +261,7 @@ def _tira(resumen: Resumen, tz: ZoneInfo) -> str:
     )
 
 
-def _problemas(problemas: list[Fila], hora, repo: str | None) -> str:
+def _problemas(problemas: list[Fila], hora, repo: str | None, hoy: date, tz: ZoneInfo) -> str:
     if not problemas:
         return (
             "  <h2>Sin salir</h2>\n"
@@ -261,18 +270,7 @@ def _problemas(problemas: list[Fila], hora, repo: str | None) -> str:
 
     tarjetas = []
     for f in problemas:
-        acciones = (
-            f'      <div class="acciones">\n'
-            f'        <a class="btn btn-primario" target="_blank" rel="noopener"'
-            f' href="https://github.com/{html.escape(repo)}/actions/workflows/tick.yml">'
-            f"Mandarlo ahora ↗</a>\n"
-            f'        <button type="button" class="btn" data-copiar="{html.escape(f.reminder_id)}">'
-            f"Copiar id</button>\n      </div>\n"
-            f'      <p class="pista">Abre Actions. Elegí <code>send-test</code>, pegá el id '
-            f"y ejecutá.</p>\n"
-            if repo
-            else ""
-        )
+        acciones = _acciones(f, hoy, tz, repo) if repo else ""
         tarjetas.append(
             f'  <div class="problema">\n    <div class="problema-top">\n'
             f'      <span class="rid">{html.escape(f.reminder_id)}</span>\n'
@@ -283,6 +281,46 @@ def _problemas(problemas: list[Fila], hora, repo: str | None) -> str:
             f"{acciones}  </div>\n"
         )
     return "  <h2>Sin salir</h2>\n" + "".join(tarjetas)
+
+
+def _acciones(f: Fila, hoy: date, tz: ZoneInfo, repo: str) -> str:
+    """Reenviar o descartar, según el día en que estaba programado.
+
+    Lo de hoy todavía puede servir. Lo de anteayer no: mandar el aviso del baño
+    del jueves un sábado no le sirve a nadie, y un botón que invita a hacer eso
+    es peor que no tener botón. Ahí la única acción sensata es reconocer la
+    pérdida y sacarla de la lista, que es lo que hace descartar — sin borrarla
+    del historial.
+    """
+    ancla = f"https://github.com/{html.escape(repo)}/actions/workflows/tick.yml"
+
+    if f.occurrence_at.astimezone(tz).date() >= hoy:
+        boton = (
+            f'<a class="btn btn-primario" target="_blank" rel="noopener" href="{ancla}">'
+            f"Mandarlo ahora ↗</a>"
+        )
+        copiar = (
+            f'<button type="button" class="btn" data-copiar="{html.escape(f.reminder_id)}">'
+            f"Copiar id</button>"
+        )
+        pista = "Abre Actions. Elegí <code>send-test</code>, pegá el id y ejecutá."
+    else:
+        boton = (
+            f'<a class="btn btn-descartar" target="_blank" rel="noopener" href="{ancla}">'
+            f"Descartar ↗</a>"
+        )
+        copiar = (
+            f'<button type="button" class="btn" data-copiar="{html.escape(f.ref)}">'
+            f"Copiar referencia</button>"
+        )
+        pista = (
+            "Ya pasó su día, así que reenviarlo no le sirve a nadie. Abre Actions, "
+            "elegí <code>descartar</code>, pegá la referencia y ejecutá."
+        )
+    return (
+        f'      <div class="acciones">\n        {boton}\n        {copiar}\n      </div>\n'
+        f'      <p class="pista">{pista}</p>\n'
+    )
 
 
 def _historia(resumen: Resumen, hora) -> str:

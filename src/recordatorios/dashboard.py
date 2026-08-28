@@ -33,6 +33,9 @@ PERDIDO = "perdido"
 VENCIDO = "vencido"
 FALLIDO = "fallido"
 EN_CURSO = "en curso"
+# Alguien la vio y decidió que ya no importa. Sigue en el historial, pero no
+# cuenta como problema: una alarma que no se puede apagar se deja de mirar.
+DESCARTADO = "descartado"
 
 # Una ocurrencia recién vencida todavía puede estar esperando su tick: marcarla
 # como perdida enseguida sería una falsa alarma. Se le da este margen antes de
@@ -53,6 +56,15 @@ class Fila:
     @property
     def es_problema(self) -> bool:
         return self.estado in (PERDIDO, VENCIDO, FALLIDO)
+
+    @property
+    def ref(self) -> str:
+        """Cómo se nombra esta ocurrencia exacta desde afuera.
+
+        Un id solo no alcanza para descartar: identifica al recordatorio, no al
+        día en que falló. Esta es la referencia que se pega en el workflow.
+        """
+        return f"{self.reminder_id}@{self.occurrence_at.astimezone(timezone.utc).isoformat()}"
 
 
 @dataclass(frozen=True)
@@ -149,6 +161,7 @@ def _clasificar(
         "stale": VENCIDO,
         "failed": FALLIDO,
         "sending": EN_CURSO,
+        "dismissed": DESCARTADO,
     }.get(row.status, row.status)
     return Fila(
         reminder_id=reminder.id,

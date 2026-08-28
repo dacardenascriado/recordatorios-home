@@ -37,6 +37,10 @@ FAILED = "failed"
 # Vencido: se pasó de max_delay_minutes y ya no se va a enviar. Es terminal,
 # igual que 'sent': el claim no lo retoma.
 STALE = "stale"
+# Descartado a mano: alguien vio la pérdida y decidió que ya no importa.
+# No borra nada —la ocurrencia sigue en el historial— pero deja de contar
+# como problema pendiente.
+DISMISSED = "dismissed"
 
 
 @dataclass(frozen=True)
@@ -200,6 +204,45 @@ class Store:
             if cur.fetchone() is None:
                 return False
         self.log(reminder_id, occurrence_at, STALE, detail, now)
+        return True
+
+    def dismiss(self, reminder_id: str, occurrence_at: datetime, now: datetime) -> bool:
+        """Marca una ocurrencia como vista y superada. True si cambió algo.
+
+        Reenviar el aviso del baño de anteayer no le sirve a nadie, pero dejarlo
+        para siempre en la lista de problemas tampoco: la alarma que nunca se
+        apaga se deja de mirar. Descartar es la tercera opción — la pérdida
+        queda en el historial, pero deja de pedir acción.
+
+        Una pérdida sin fila en la base (nadie la vio) se inserta ya descartada;
+        una vencida o fallida se pisa. Un 'sent' no se toca nunca: descartar es
+        para lo que no salió, y falsear un envío sería peor que el problema.
+        """
+        params = (
+            reminder_id,
+            self._dialect.encode_ts(occurrence_at),
+            DISMISSED,
+            self._dialect.encode_ts(now),
+            "descartado a mano",
+            SENT,
+        )
+        sql = self._sql(
+            """
+            INSERT INTO deliveries
+                (reminder_id, occurrence_at, status, attempts, claimed_at, detail)
+            VALUES ({p}, {p}, {p}, 0, {p}, {p})
+            ON CONFLICT (reminder_id, occurrence_at) DO UPDATE
+                SET status = {excluded}.status,
+                    detail = {excluded}.detail
+                WHERE deliveries.status <> {p}
+            RETURNING 1
+            """
+        )
+        with self._dialect.cursor() as cur:
+            cur.execute(sql, params)
+            if cur.fetchone() is None:
+                return False
+        self.log(reminder_id, occurrence_at, DISMISSED, "descartado a mano", now)
         return True
 
     def mark_sent(self, reminder_id: str, occurrence_at: datetime, now: datetime) -> None:
