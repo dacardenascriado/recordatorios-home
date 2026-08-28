@@ -98,3 +98,33 @@ def test_check_se_planta_si_el_yaml_esta_roto(entorno, capsys):
     assert cli.main(["check"]) == 1
     # Sin YAML válido no tiene sentido seguir revisando lo demás.
     assert "@recordatorios_home_bot" not in capsys.readouterr().out
+
+
+YAML_MAX_DELAY_LARGO = """
+version: 1
+defaults:
+  chat_id: "${TELEGRAM_CHAT_ID}"
+reminders:
+  - id: generoso
+    cron: "0 7 * * 1"
+    max_delay_minutes: 900
+    message: "sacar la basura"
+"""
+
+
+def test_validate_avisa_si_el_max_delay_alcanza_la_ventana(entorno, monkeypatch, capsys):
+    # Con max_delay >= ventana, lo que se vence ya salió de la ventana cuando el
+    # tick lo miraría: se perdería sin fila en la base, sin log y sin aviso. Es
+    # el peor modo de fallo del sistema, así que `validate` tiene que gritarlo.
+    (entorno / "reminders.yaml").write_text(YAML_MAX_DELAY_LARGO, encoding="utf-8")
+
+    assert cli.main(["validate"]) == 0
+
+    salida = capsys.readouterr().out
+    assert "generoso" in salida
+    assert "no es menor que la ventana de recuperación" in salida
+
+
+def test_validate_no_avisa_con_un_max_delay_sano(entorno, capsys):
+    assert cli.main(["validate"]) == 0
+    assert "ventana de recuperación" not in capsys.readouterr().out

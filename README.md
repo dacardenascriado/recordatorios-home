@@ -291,12 +291,40 @@ valida el archivo en cada push, así que un typo no llega a producción.
 | `week_offset` | no | Cuál de esas N semanas (0 … N-1) |
 | `anchor` | no | Fecha del primer turno, y semana 0 para `every_weeks` (para eso se normaliza a su lunes) |
 | `starts_on` / `ends_on` | no | Límites de vigencia (`AAAA-MM-DD`) |
-| `max_delay_minutes` | no | Si queda más atrasado que esto, se descarta en vez de llegar a destiempo (y queda anotado como `stale`). Por defecto 120, la mitad de la ventana de recuperación; bajalo para recordatorios que tarde no sirven |
+| `max_delay_minutes` | no | Si queda más atrasado que esto, se descarta en vez de llegar a destiempo (y queda anotado como `stale`, con aviso al chat). Por defecto 120, pero conviene fijarlo por recordatorio — ver [Cuánto puede llegar tarde](#cuánto-puede-llegar-tarde-cada-recordatorio) |
 | `parse_mode` | no | `HTML`, `Markdown`, `MarkdownV2` o `none` |
 | `silent` | no | `true` envía sin notificación sonora |
 
 `defaults` acepta los mismos campos salvo `id`, `name`, `cron`, `message`,
 `rotation`, `every_weeks` y `week_offset`.
+
+### Cuánto puede llegar tarde cada recordatorio
+
+`max_delay_minutes` es el campo que más se subestima. La pregunta para elegirlo
+es siempre la misma: **¿hasta qué hora este mensaje todavía le sirve a quien lo
+recibe?**
+
+Ponerlo corto no protege de nada. Un recordatorio descartado no es uno
+entregado a tiempo: es uno que no llegó. Con 120 min para todo, el aviso de
+"saca la carne del congelador" de las 9:00 se tiraba a las 11:00 — aunque a las
+15:00 seguía siendo útil, porque se cocina a las 18:00. Así se perdió un
+almuerzo en agosto de 2026.
+
+Los valores de este repo, y por qué:
+
+| Recordatorio | Hora | `max_delay` | Sirve hasta |
+|---|---|---|---|
+| `bano-manana` | 5:00 | 480 | 13:00 — el baño se limpia a cualquier hora |
+| `bano-tarde` | 17:00 | 240 | 21:00 — es un control, después no cambia nada |
+| `basura-*-manana` | 6:00 | 180 | 9:00 — después ya pasó el camión |
+| `basura-*-tarde` | 19:00 | 180 | 22:00 — control nocturno, sin despertar a nadie |
+| `almuerzo-*-manana` | 9:00 | 420 | 16:00 — deja 2 h de descongelado |
+| `almuerzo-*-tarde` | 18:00 | 240 | 22:00 — el almuerzo es de mañana, da tiempo |
+
+El tope es la ventana de recuperación (`TICK_LOOKBACK_MINUTES`, 720 min): un
+`max_delay` que la alcance devuelve el sistema a su peor modo de fallo, porque
+lo vencido ya salió de la ventana cuando el tick lo miraría y se pierde sin
+fila en la base, sin log y sin aviso. `validate` lo comprueba y avisa.
 
 ### Comandos
 
@@ -356,7 +384,8 @@ Un retraso de Actions se recupera en la corrida siguiente en vez de perderse, y
 la ventana es fija: no hay ningún cursor que mantener.
 
 La ventana (12 h) es deliberadamente más ancha que el plazo de entrega
-(`max_delay_minutes`, 2 h), y esa diferencia no es decorativa. Si fueran
+(`max_delay_minutes`, entre 3 y 8 h según el recordatorio), y esa diferencia
+no es decorativa. Si fueran
 iguales, todo lo que entra en la ventana estaría por definición dentro del
 plazo, y lo que se pasó del plazo ya habría salido de la ventana: el tick no lo
 vería nunca. Un recordatorio perdido por una caída larga de Actions

@@ -94,7 +94,7 @@ def run_tick(
     si no hay nada que enviar ni que descartar, esta función no lo usa y nunca
     llega a abrirse."""
     now = now or datetime.now(timezone.utc)
-    start = now - timedelta(minutes=_lookback_minutes(settings))
+    start = now - timedelta(minutes=lookback_minutes(settings))
     result = TickResult(window_start=start, window_end=now, dry_run=dry_run)
 
     candidatas: list[tuple[Reminder, datetime]] = []
@@ -294,7 +294,7 @@ def _deliver(
     return Outcome(reminder, occurrence, "sent", f"turno de {quien}, {detalle}" if quien else detalle)
 
 
-def _lookback_minutes(settings: Settings) -> int:
+def lookback_minutes(settings: Settings) -> int:
     """Cuánto hacia atrás mira cada tick.
 
     Es la tolerancia a que Actions se atrase o se caiga: un hueco más largo que
