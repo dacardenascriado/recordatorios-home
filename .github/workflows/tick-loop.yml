@@ -10,9 +10,15 @@ name: tick-loop
 # de alta frecuencia en repos sin actividad reciente.
 #
 # La salida es dejar de depender de que Actions arranque seguido: este workflow
-# pide 4 arranques al día en vez de 288, y el intervalo de 5 minutos lo pone un
+# pide 8 arranques al día en vez de 288, y el intervalo de 5 minutos lo pone un
 # bucle dentro del propio job. Un arranque atrasado media hora ya no pierde
 # nada; solo desplaza el comienzo de su bloque.
+#
+# Por qué bloques de 3 h y no de 6 (que es el tope duro de un job): un arranque
+# que Actions no honre se lleva el bloque entero, así que el largo del bloque
+# es el tamaño del peor hueco posible. Con 3 h se pierde la mitad que con 6 y
+# cuesta lo mismo en horas de runner — solo son más `pip install`, que con la
+# caché de pip son segundos.
 #
 # `tick.yml` se queda como red de respaldo: si un bloque de estos no arranca,
 # alguna corrida suelta del `*/5` puede tapar el hueco. Que los dos coincidan
@@ -20,9 +26,9 @@ name: tick-loop
 # se queda con cada ocurrencia.
 on:
   schedule:
-    # Cada 6 horas. El minuto 3 evita la hora en punto, que es cuando más se
+    # Cada 3 horas. El minuto 3 evita la hora en punto, que es cuando más se
     # congestiona la cola de Actions.
-    - cron: "3 0,6,12,18 * * *"
+    - cron: "3 */3 * * *"
   workflow_dispatch:
 
 # Un bloque a la vez. Si el anterior todavía no terminó, el nuevo espera en vez
@@ -37,9 +43,9 @@ permissions:
 jobs:
   loop:
     runs-on: ubuntu-latest
-    # El tope duro de un job son 6 h. 5h50 deja margen para el checkout, el
-    # pip install y el último tick antes de que Actions lo corte.
-    timeout-minutes: 350
+    # El bucle corre 2h50; esto deja margen para el checkout, el pip install y
+    # el último tick antes de que Actions lo corte.
+    timeout-minutes: 175
     steps:
       - uses: actions/checkout@v4
 
@@ -63,8 +69,9 @@ jobs:
           PERSONA_4: ${{ secrets.PERSONA_4 }}
         run: |
           INTERVALO=300
-          # 5h45 de bucle, dentro del timeout de 5h50 del job.
-          DURACION=$(( 345 * 60 ))
+          # 2h50 de bucle. Tiene que terminar antes de que el cron dispare el
+          # bloque siguiente (3 h), o los bloques se irían encolando.
+          DURACION=$(( 170 * 60 ))
           inicio=$(date +%s)
           vuelta=0
 

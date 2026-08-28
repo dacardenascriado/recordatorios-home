@@ -31,7 +31,7 @@ DEFAULT_STATE_FILE = ".tick-state.json"
 # ocurrencias que caían en los huecos de 10 h no entraban en ninguna corrida y
 # desaparecían sin dejar rastro — justo el modo de fallo que este margen existe
 # para evitar. La ventana tiene que cubrir el peor hueco realista, que hoy es
-# un bloque entero de `tick-loop` perdido (6 h) más su retraso de arranque.
+# un bloque entero de `tick-loop` perdido (3 h) más su retraso de arranque.
 #
 # El costo: después de un hueco, lo vencido sigue apareciendo durante 12 h y
 # cada tick abre la base para confirmar que ya lo registró. Se paga solo

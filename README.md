@@ -36,7 +36,7 @@ que mantener despierto.
 Ese intervalo de 5 minutos **no** sale de pedirle a Actions 288 arranques al día.
 Se probó, y no funciona: ver [Por qué el reloj es un bucle](#por-qué-el-reloj-es-un-bucle-y-no-un-cron-de-5-minutos).
 Lo pone un bucle dentro de un job largo,
-[`tick-loop.yml`](.github/workflows/tick-loop.yml), que arranca 4 veces al día.
+[`tick-loop.yml`](.github/workflows/tick-loop.yml), que arranca 8 veces al día.
 
 Lo que se cede a cambio:
 
@@ -80,11 +80,16 @@ más anchos que la ventana de recuperación, así que las ocurrencias que caían
 adentro no entraban en ninguna corrida y desaparecían sin dejar rastro.
 
 La salida es no depender de que Actions arranque seguido:
-[`tick-loop.yml`](.github/workflows/tick-loop.yml) pide **4 arranques al día**
+[`tick-loop.yml`](.github/workflows/tick-loop.yml) pide **8 arranques al día**
 en vez de 288, y el intervalo de 5 minutos lo pone un bucle `tick; sleep 300`
-dentro del job (el tope duro de un job son 6 h; el bloque corre 5h45). Un
-arranque que llega media hora tarde ya no pierde nada: solo desplaza el
-comienzo de su bloque.
+dentro del job. Un arranque que llega media hora tarde ya no pierde nada: solo
+desplaza el comienzo de su bloque.
+
+Los bloques son de 3 h, no de 6 (que es el tope duro de un job), porque un
+arranque que Actions no honre se lleva el bloque entero: el largo del bloque
+**es** el tamaño del peor hueco posible. Con 3 h se pierde la mitad que con 6 y
+cuesta las mismas horas de runner — solo son más `pip install`, que con la
+caché de pip son segundos.
 
 [`tick.yml`](.github/workflows/tick.yml) se queda con su `*/5` como red de
 respaldo —las corridas sueltas que sí arrancan pueden tapar un bloque que no
@@ -324,7 +329,7 @@ suficiente para probar. Los tests corren siempre sobre SQLite y no tocan la red.
 ## Cómo funciona por dentro
 
 ```
-tick-loop (4 arranques/día, bucle interno cada 5 min)
+tick-loop (8 arranques/día, bucle interno cada 5 min)
         │
         ▼
   python -m recordatorios tick
@@ -362,7 +367,7 @@ anotada como `stale` — que es como uno se entera de que faltó.
 El margen era de 4 h hasta que la caída de agosto de 2026 dejó huecos de 10 h y
 demostró que era corto: lo que caía adentro se perdía en silencio, que es
 exactamente lo que el margen existe para impedir. Ahora la ventana cubre el
-peor hueco realista —un bloque entero de `tick-loop` perdido (6 h) más su
+peor hueco realista —un bloque entero de `tick-loop` perdido (3 h) más su
 retraso de arranque—. El costo es que, después de una caída, lo vencido sigue
 apareciendo 12 h y cada tick abre la base para confirmar que ya lo anotó; se
 paga solo después de una caída, no en régimen normal.
@@ -453,7 +458,7 @@ src/recordatorios/
   tick.py                   la corrida: ventana → envíos
   cli.py                    los comandos
 .github/workflows/
-  tick-loop.yml             el reloj: 4 bloques al día, bucle interno de 5 min
+  tick-loop.yml             el reloj: 8 bloques de 3 h, bucle interno de 5 min
   tick.yml                  respaldo del reloj + acciones manuales
   ci.yml                    tests + validación del YAML
   keepalive.yml             evita que GitHub apague el cron
