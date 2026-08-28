@@ -174,6 +174,8 @@ def describe(reminder: Reminder) -> str:
         base += f" · turnos: {' → '.join(reminder.rotation)} (desde {reminder.anchor})"
     if len(reminder.messages) > 1:
         base += f" · {len(reminder.messages)} mensajes rotativos"
+    if reminder.is_poll:
+        base += f" · encuesta ({len(reminder.poll_options)} respuestas)"
     if reminder.starts_on:
         base += f" · desde {reminder.starts_on}"
     if reminder.ends_on:

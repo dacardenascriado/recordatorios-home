@@ -8,6 +8,13 @@ from pathlib import Path
 
 DEFAULT_REMINDERS_FILE = "reminders.yaml"
 
+# Caché local de ocurrencias ya resueltas, para no volver a preguntarle a la
+# base lo que este mismo runner ya preguntó. Vive en el workspace del job, así
+# que dura lo que dura un bloque de `tick-loop` y arranca vacío en cada corrida
+# nueva — es un atajo de costo, no estado del que dependa la corrección.
+# Ponerla en vacío ("") desactiva el caché.
+DEFAULT_STATE_FILE = ".tick-state.json"
+
 # Ventana de recuperación: cuánto hacia atrás mira cada tick. Define la
 # tolerancia a que GitHub Actions se atrase o se caiga; un hueco más largo que
 # esto pierde los recordatorios que hayan caído dentro.
@@ -18,11 +25,23 @@ DEFAULT_REMINDERS_FILE = "reminders.yaml"
 # ve nunca y se pierde en silencio, sin fila en la base ni línea en el log. Con
 # la ventana más ancha queda un margen en el que la ocurrencia todavía se ve,
 # se descarta a conciencia y se registra que se perdió.
-DEFAULT_LOOKBACK_MINUTES = 240
+#
+# Por qué 12 horas y no 4: en agosto de 2026 Actions dejó de honrar el cron
+# `*/5` y bajó a correr el tick 3 veces al día. Con la ventana en 4 h, las
+# ocurrencias que caían en los huecos de 10 h no entraban en ninguna corrida y
+# desaparecían sin dejar rastro — justo el modo de fallo que este margen existe
+# para evitar. La ventana tiene que cubrir el peor hueco realista, que hoy es
+# un bloque entero de `tick-loop` perdido (3 h) más su retraso de arranque.
+#
+# El costo: después de un hueco, lo vencido sigue apareciendo durante 12 h y
+# cada tick abre la base para confirmar que ya lo registró. Se paga solo
+# después de una caída, no en régimen normal — sin nada vencido ni pendiente,
+# run_tick sigue sin tocar la base.
+DEFAULT_LOOKBACK_MINUTES = 720
 
 # Tope duro de la ventana. Evita que un valor mal puesto reviva recordatorios de
 # hace días y mantenga la base despierta de más.
-MAX_WINDOW_HOURS = 6
+MAX_WINDOW_HOURS = 12
 
 
 @dataclass(frozen=True)
@@ -32,16 +51,19 @@ class Settings:
     reminders_file: Path
     lookback_minutes: int
     max_window_hours: int
+    state_file: Path | None = None
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> Settings:
         env = dict(os.environ if env is None else env)
+        bruto = env.get("TICK_STATE_FILE", DEFAULT_STATE_FILE).strip()
         return cls(
             telegram_token=_clean(env.get("TELEGRAM_BOT_TOKEN")),
             database_url=_clean(env.get("DATABASE_URL")),
             reminders_file=Path(env.get("REMINDERS_FILE") or DEFAULT_REMINDERS_FILE),
             lookback_minutes=_int(env, "TICK_LOOKBACK_MINUTES", DEFAULT_LOOKBACK_MINUTES),
             max_window_hours=_int(env, "TICK_MAX_WINDOW_HOURS", MAX_WINDOW_HOURS),
+            state_file=Path(bruto) if bruto else None,
         )
 
     def require_token(self) -> str:

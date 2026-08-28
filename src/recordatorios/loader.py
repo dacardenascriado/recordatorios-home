@@ -17,8 +17,16 @@ from recordatorios.models import (
     DEFAULT_ANCHOR,
     DEFAULT_MAX_DELAY_MINUTES,
     DEFAULT_TIMEZONE,
+    SIGUIENTE,
     TURNO,
     Reminder,
+    plain,
+)
+from recordatorios.telegram import (
+    POLL_MAX_OPTIONS,
+    POLL_MIN_OPTIONS,
+    POLL_OPTION_MAX,
+    POLL_QUESTION_MAX,
 )
 
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
@@ -42,8 +50,10 @@ REMINDER_KEYS = {
     "max_delay_minutes",
     "parse_mode",
     "silent",
+    "poll",
 }
 DEFAULTS_KEYS = REMINDER_KEYS - {
+    "poll",
     "id",
     "name",
     "cron",
@@ -162,6 +172,7 @@ def _build(
 
     messages = _messages(data.get("message"), where, env, problems)
     rotation = _rotation(data.get("rotation"), where, env, problems)
+    poll_options = _poll(data.get("poll"), messages, rotation, where, env, problems)
 
     # Con turnos o con varios mensajes hay que saber desde cuándo se cuenta, y
     # el anchor por defecto (1970) obligaría a recorrer medio siglo de fechas.
@@ -237,7 +248,75 @@ def _build(
         max_delay_minutes=max_delay or DEFAULT_MAX_DELAY_MINUTES,
         parse_mode=parse_mode,
         silent=bool(silent),
+        poll_options=poll_options,
     )
+
+
+def _poll(
+    value: Any,
+    messages: tuple[str, ...],
+    rotation: tuple[str, ...],
+    where: str,
+    env: dict[str, str],
+    problems: list[str],
+) -> tuple[str, ...]:
+    """'poll' convierte el recordatorio en una encuesta: el mensaje pasa a ser la
+    pregunta y estas son las respuestas.
+
+    Los límites de Telegram se comprueban acá y no al enviar, porque un
+    `sendPoll` rechazado es un recordatorio que no llega, y de esos ya tuvimos.
+    Ojo con el de 300 caracteres: los mensajes del almuerzo ya rozan los 280.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, dict):
+        problems.append(f"{where}: 'poll' debe ser un mapa con 'options'")
+        return ()
+
+    _check_unknown(value, {"options"}, f"{where}.poll", problems)
+
+    crudas = value.get("options")
+    if not isinstance(crudas, list) or not crudas:
+        problems.append(f"{where}: 'poll.options' debe ser una lista de respuestas")
+        return ()
+
+    opciones: list[str] = []
+    for n, cruda in enumerate(crudas, start=1):
+        texto = _expand(cruda, where, f"poll.options[{n}]", env, problems)
+        if texto is None:
+            continue
+        if len(texto) > POLL_OPTION_MAX:
+            problems.append(
+                f"{where}: la respuesta {n} tiene {len(texto)} caracteres y Telegram "
+                f"admite {POLL_OPTION_MAX}"
+            )
+            continue
+        opciones.append(texto)
+
+    if not POLL_MIN_OPTIONS <= len(opciones) <= POLL_MAX_OPTIONS:
+        problems.append(
+            f"{where}: una encuesta necesita entre {POLL_MIN_OPTIONS} y "
+            f"{POLL_MAX_OPTIONS} respuestas, y hay {len(opciones)}"
+        )
+        return ()
+
+    # La pregunta es el mensaje ya sin etiquetas y con el nombre puesto: es así
+    # como llega a Telegram. Se mide el peor caso —el nombre más largo de la
+    # rotación— porque los mensajes del almuerzo dejan ~20 caracteres de margen
+    # y medirlos con el {turno} sin sustituir haría pasar un YAML que después
+    # falla al enviar, que es la clase de error que este archivo existe para
+    # atrapar antes de main.
+    relleno = "x" * max((len(nombre) for nombre in rotation), default=0)
+    for n, mensaje in enumerate(messages, start=1):
+        peor = plain(mensaje).replace(TURNO, relleno).replace(SIGUIENTE, relleno)
+        if len(peor) > POLL_QUESTION_MAX:
+            problems.append(
+                f"{where}: con el nombre más largo de la rotación el mensaje {n} llega "
+                f"a {len(peor)} caracteres, y la pregunta de una encuesta admite "
+                f"{POLL_QUESTION_MAX}; acortalo o quitale el 'poll'"
+            )
+
+    return tuple(opciones)
 
 
 def _messages(

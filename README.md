@@ -33,11 +33,16 @@ Así que el reloj es explícito: **GitHub Actions ejecuta un tick cada 5 minutos
 y ese tick decide qué mandar. Gratis e ilimitado en repos públicos, y sin nada
 que mantener despierto.
 
+Ese intervalo de 5 minutos **no** sale de pedirle a Actions 288 arranques al día.
+Se probó, y no funciona: ver [Por qué el reloj es un bucle](#por-qué-el-reloj-es-un-bucle-y-no-un-cron-de-5-minutos).
+Lo pone un bucle dentro de un job largo,
+[`tick-loop.yml`](.github/workflows/tick-loop.yml), que arranca 8 veces al día.
+
 Lo que se cede a cambio:
 
-- **Puntualidad.** Actions no garantiza la hora exacta: un cron `*/5` puede
-  llegar con 10-20 minutos de retraso en horas pico, o saltarse una corrida.
-  Para recordatorios domésticos alcanza; para algo al minuto exacto, no sirve.
+- **Puntualidad.** Actions no garantiza la hora exacta: un job puede tardar en
+  arrancar en horas pico. Para recordatorios domésticos alcanza; para algo al
+  minuto exacto, no sirve.
 - **Los cambios van por git.** Crear un recordatorio es editar el YAML y hacer
   push. No hay interfaz web (ver [Si algún día querés UI](#si-algún-día-querés-ui)).
 - **GitHub apaga los workflows programados** de un repo con 60 días sin
@@ -46,7 +51,51 @@ Lo que se cede a cambio:
 
 El tick nunca pierde un recordatorio por un retraso: no pregunta "¿toca justo
 ahora?" sino "¿qué venció desde la corrida anterior?". Si Actions se saltó tres
-turnos, el siguiente tick recupera lo pendiente.
+turnos, el siguiente tick recupera lo pendiente. Y lo que ni así se recupera
+—un hueco más largo que la ventana— se avisa por Telegram en vez de perderse
+en silencio.
+
+---
+
+## Por qué el reloj es un bucle y no un cron de 5 minutos
+
+El diseño original era un solo workflow con `cron: "*/5 * * * *"`. En agosto de
+2026 dejó de llegar el recordatorio del almuerzo, y las corridas de Actions
+estaban **todas en verde**. El problema no era el código: era que GitHub había
+dejado de arrancarlas.
+
+Corridas reales del workflow `tick`, contra las 288 diarias que pide el cron:
+
+| día | corridas | del cron |
+|---|---|---|
+| 16–23 ago | 37–58 | ~15 % |
+| 26 ago | 24 | 8 % |
+| 27 ago | 3 | 1 % |
+| 28 ago | 1 | 0,3 % |
+
+GitHub retrasa y **descarta** corridas `schedule`, y castiga especialmente los
+crons de alta frecuencia en repos sin actividad reciente. La degradación empezó
+justo después del último push y se aceleró hasta dejar huecos de 10 horas —
+más anchos que la ventana de recuperación, así que las ocurrencias que caían
+adentro no entraban en ninguna corrida y desaparecían sin dejar rastro.
+
+La salida es no depender de que Actions arranque seguido:
+[`tick-loop.yml`](.github/workflows/tick-loop.yml) pide **8 arranques al día**
+en vez de 288, y el intervalo de 5 minutos lo pone un bucle `tick; sleep 300`
+dentro del job. Un arranque que llega media hora tarde ya no pierde nada: solo
+desplaza el comienzo de su bloque.
+
+Los bloques son de 3 h, no de 6 (que es el tope duro de un job), porque un
+arranque que Actions no honre se lleva el bloque entero: el largo del bloque
+**es** el tamaño del peor hueco posible. Con 3 h se pierde la mitad que con 6 y
+cuesta las mismas horas de runner — solo son más `pip install`, que con la
+caché de pip son segundos.
+
+[`tick.yml`](.github/workflows/tick.yml) se queda con su `*/5` como red de
+respaldo —las corridas sueltas que sí arrancan pueden tapar un bloque que no
+haya arrancado— y como consola de mando a mano. Que los dos coincidan no
+duplica mensajes: `store.claim()` es un upsert atómico y solo una corrida se
+queda con cada ocurrencia.
 
 ---
 
@@ -242,12 +291,80 @@ valida el archivo en cada push, así que un typo no llega a producción.
 | `week_offset` | no | Cuál de esas N semanas (0 … N-1) |
 | `anchor` | no | Fecha del primer turno, y semana 0 para `every_weeks` (para eso se normaliza a su lunes) |
 | `starts_on` / `ends_on` | no | Límites de vigencia (`AAAA-MM-DD`) |
-| `max_delay_minutes` | no | Si queda más atrasado que esto, se descarta en vez de llegar a destiempo (y queda anotado como `stale`). Por defecto 120, la mitad de la ventana de recuperación; bajalo para recordatorios que tarde no sirven |
+| `max_delay_minutes` | no | Si queda más atrasado que esto, se descarta en vez de llegar a destiempo (y queda anotado como `stale`, con aviso al chat). Por defecto 120, pero conviene fijarlo por recordatorio — ver [Cuánto puede llegar tarde](#cuánto-puede-llegar-tarde-cada-recordatorio) |
 | `parse_mode` | no | `HTML`, `Markdown`, `MarkdownV2` o `none` |
 | `silent` | no | `true` envía sin notificación sonora |
+| `poll` | no | Convierte el aviso en encuesta — ver [Encuestas](#encuestas-para-que-alguien-confirme) |
 
 `defaults` acepta los mismos campos salvo `id`, `name`, `cron`, `message`,
 `rotation`, `every_weeks` y `week_offset`.
+
+### Encuestas, para que alguien confirme
+
+Un recordatorio puede llegar como encuesta en vez de como mensaje: el texto
+pasa a ser la pregunta y `poll.options` son las respuestas.
+
+```yaml
+  - id: basura-lun-mie-manana
+    cron: "0 6 * * 1,3"
+    poll:
+      options:
+        - "✅ Sí, yo la saco"
+        - "🕒 Sí, antes de que pase el camión"
+        - "🙅 Hoy no puedo"
+    message:
+      - "🗑️ Hoy le toca a {turno} sacar la basura."
+```
+
+La encuesta **no es anónima**, que es todo el punto: lo que se quiere saber no
+es cuántos contestaron sino si contestó la persona a la que le toca.
+
+**El bot manda las encuestas pero no lee las respuestas.** Sirven para que el
+grupo vea quién confirmó, no para que el sistema reaccione — insistirle a quien
+no contestó necesitaría `getUpdates` o un webhook, y estado en la base.
+
+Dos límites de Telegram que conviene tener presentes, porque el síntoma de
+pasarse es un recordatorio que no llega:
+
+- **La pregunta admite 300 caracteres** y no interpreta HTML, así que las
+  negritas se pierden. Los mensajes del almuerzo ya rozan los 280.
+- **Entre 2 y 12 respuestas**, de hasta 100 caracteres cada una.
+
+`validate` comprueba las dos cosas en cada push, y mide la pregunta con el
+**nombre más largo de la rotación ya sustituido** — medirla con el `{turno}` sin
+sustituir dejaría pasar un YAML que después falla al enviar.
+
+En este repo la llevan los cinco avisos de la mañana (los que preguntan si vas
+a hacer la tarea). Los controles de la tarde siguen siendo mensajes, que ya
+preguntan si *ya* la hiciste.
+
+### Cuánto puede llegar tarde cada recordatorio
+
+`max_delay_minutes` es el campo que más se subestima. La pregunta para elegirlo
+es siempre la misma: **¿hasta qué hora este mensaje todavía le sirve a quien lo
+recibe?**
+
+Ponerlo corto no protege de nada. Un recordatorio descartado no es uno
+entregado a tiempo: es uno que no llegó. Con 120 min para todo, el aviso de
+"saca la carne del congelador" de las 9:00 se tiraba a las 11:00 — aunque a las
+15:00 seguía siendo útil, porque se cocina a las 18:00. Así se perdió un
+almuerzo en agosto de 2026.
+
+Los valores de este repo, y por qué:
+
+| Recordatorio | Hora | `max_delay` | Sirve hasta |
+|---|---|---|---|
+| `bano-manana` | 5:00 | 480 | 13:00 — el baño se limpia a cualquier hora |
+| `bano-tarde` | 17:00 | 240 | 21:00 — es un control, después no cambia nada |
+| `basura-*-manana` | 6:00 | 180 | 9:00 — después ya pasó el camión |
+| `basura-*-tarde` | 19:00 | 180 | 22:00 — control nocturno, sin despertar a nadie |
+| `almuerzo-*-manana` | 9:00 | 420 | 16:00 — deja 2 h de descongelado |
+| `almuerzo-*-tarde` | 18:00 | 240 | 22:00 — el almuerzo es de mañana, da tiempo |
+
+El tope es la ventana de recuperación (`TICK_LOOKBACK_MINUTES`, 720 min): un
+`max_delay` que la alcance devuelve el sistema a su peor modo de fallo, porque
+lo vencido ya salió de la ventana cuando el tick lo miraría y se pierde sin
+fila en la base, sin log y sin aviso. `validate` lo comprueba y avisa.
 
 ### Comandos
 
@@ -280,19 +397,20 @@ suficiente para probar. Los tests corren siempre sobre SQLite y no tocan la red.
 ## Cómo funciona por dentro
 
 ```
-GitHub Actions (cada 5 min)
+tick-loop (8 arranques/día, bucle interno cada 5 min)
         │
         ▼
   python -m recordatorios tick
         │
         ├─ lee reminders.yaml               → qué recordatorios existen
-        ├─ calcula la ventana (ahora-4h, ahora]
+        ├─ calcula la ventana (ahora-12h, ahora]
         ├─ separa lo vencido (más de max_delay_minutes) de lo pendiente
         │
         ├─ ¿quedó algo? NO  → termina sin conectar a la base   ← ~99% de los ticks
         │
         └─ ¿quedó algo? SÍ  → recién acá conecta a Neon
-              ├─ lo vencido → se anota una vez como 'stale' y no se envía
+              ├─ lo vencido → se anota una vez como 'stale', no se envía,
+              │                y se avisa al chat de que se perdió
               └─ lo pendiente
                     ├─ claim (reminder_id, occurrence_at)
                     │     └─ ¿ya lo tomó otra corrida? → se abstiene
@@ -301,18 +419,35 @@ GitHub Actions (cada 5 min)
 
 Tres decisiones que sostienen todo lo demás:
 
-**Ventanas, no instantes.** El tick procesa el intervalo `(ahora - 4h, ahora]`.
+**Ventanas, no instantes.** El tick procesa el intervalo `(ahora - 12h, ahora]`.
 Un retraso de Actions se recupera en la corrida siguiente en vez de perderse, y
 la ventana es fija: no hay ningún cursor que mantener.
 
-La ventana (4 h) es deliberadamente más ancha que el plazo de entrega
-(`max_delay_minutes`, 2 h), y esa diferencia no es decorativa. Si fueran
+La ventana (12 h) es deliberadamente más ancha que el plazo de entrega
+(`max_delay_minutes`, entre 3 y 8 h según el recordatorio), y esa diferencia
+no es decorativa. Si fueran
 iguales, todo lo que entra en la ventana estaría por definición dentro del
 plazo, y lo que se pasó del plazo ya habría salido de la ventana: el tick no lo
 vería nunca. Un recordatorio perdido por una caída larga de Actions
 desaparecería sin error, sin fila en la base y sin línea en el log. Con el
 margen, la ocurrencia vencida todavía se ve, se descarta a conciencia y queda
 anotada como `stale` — que es como uno se entera de que faltó.
+
+El margen era de 4 h hasta que la caída de agosto de 2026 dejó huecos de 10 h y
+demostró que era corto: lo que caía adentro se perdía en silencio, que es
+exactamente lo que el margen existe para impedir. Ahora la ventana cubre el
+peor hueco realista —un bloque entero de `tick-loop` perdido (3 h) más su
+retraso de arranque—. El costo es que, después de una caída, lo vencido sigue
+apareciendo 12 h y cada tick abre la base para confirmar que ya lo anotó; se
+paga solo después de una caída, no en régimen normal.
+
+**Una pérdida no puede ser silenciosa.** Anotar el `stale` en la base solo sirve
+si alguien mira la base. Cuando el tick descarta una ocurrencia por vencida,
+manda además un mensaje al chat diciendo qué no salió y para cuándo era. Se
+avisa una sola vez por ocurrencia (mientras siga en la ventana, los ticks
+siguientes la ven como `already_handled`), y solo de lo definitivamente perdido:
+un `failed` se reintenta solo, así que avisar de eso sería ruido. Si el aviso
+falla, queda en el informe del tick pero no lo tumba.
 
 **La clave primaria es la idempotencia.** La tabla `deliveries` tiene
 `PRIMARY KEY (reminder_id, occurrence_at)`. Antes de enviar, el tick inserta esa
@@ -343,26 +478,41 @@ suspendería el proyecto hasta el mes siguiente. Los recordatorios morirían a
 mitad de mes, sin aviso.
 
 Con la conexión perezosa, la base solo despierta cuando un recordatorio vence
-de verdad. Después de cada envío queda encendida durante la ventana de
-recuperación (4 h), porque los ticks de ese rato siguen consultándola para
-confirmar que ya se envió. O sea ~1 CU-hour por recordatorio disparado:
-**unas 30 CU-hours al mes con 30 recordatorios**, dentro de las 100.
+de verdad. Pero eso solo no alcanza con la ventana en 12 h: una ocurrencia ya
+enviada **sigue apareciendo en la ventana** durante esas 12 h, y los ticks de
+ese rato volvían a abrir la conexión nada más que para reconfirmar lo que ya
+sabían. Con recordatorios repartidos entre las 5:00 y las 19:00, eso encadenaba
+las ventanas y dejaba el compute despierto casi 24/7 — la ventana ancha, sola,
+habría reventado la cuota.
 
-Ese es el precio de la ventana ancha: con 2 h costaba la mitad, pero era la
-configuración en la que un recordatorio perdido no dejaba rastro. El margen se
-paga en compute y se cobra en poder saber qué pasó.
+Por eso el tick guarda un **caché local** de lo que ya resolvió
+(`.tick-state.json`, en el workspace del job). Lo que está ahí no se le vuelve
+a preguntar a la base. Con eso, la conexión se abre solo cuando hay algo
+genuinamente nuevo, y la ventana de 12 h pasa a costar prácticamente lo mismo
+que la de 4 h.
 
-De ahí salen los dos únicos parámetros que conviene no tocar a la ligera:
+Tres propiedades lo hacen seguro: la base sigue siendo la única fuente de
+verdad, un caché vacío o ilegible solo hace la corrida más cara (nunca
+incorrecta), y solo se cachean estados terminales — un `failed` no entra nunca,
+así que se sigue reintentando.
+
+El caché vive en el workspace, así que dura lo que dura un bloque de
+`tick-loop` y arranca vacío en cada corrida nueva. Por eso las corridas de
+respaldo de `tick.yml`, que estrenan runner cada vez, van con
+`TICK_LOOKBACK_MINUTES=240`: sin caché, una ventana ancha ahí sí saldría cara.
+
+De ahí salen los parámetros que conviene no tocar a la ligera:
 
 | Variable | Por defecto | Efecto de subirlo |
 |---|---|---|
-| `TICK_LOOKBACK_MINUTES` | 240 | Más tolerancia a caídas de Actions, pero más horas de compute por cada envío |
-| `TICK_MAX_WINDOW_HOURS` | 6 | Tope duro de la anterior, para que un error de dedo no vacíe la cuota |
+| `TICK_LOOKBACK_MINUTES` | 720 | Más tolerancia a caídas de Actions, pero más horas de compute cuando el caché no ayuda |
+| `TICK_MAX_WINDOW_HOURS` | 12 | Tope duro de la anterior, para que un error de dedo no vacíe la cuota |
+| `TICK_STATE_FILE` | `.tick-state.json` | Dónde vive el caché. En vacío (`""`) lo desactiva: todo sigue funcionando, solo que más caro |
 
 Si algún día tenés muchos recordatorios diarios y te acercás al límite, la
-palanca es bajar `TICK_LOOKBACK_MINUTES` (a 180, por ejemplo). Lo que no
-conviene es bajarlo hasta igualar el `max_delay_minutes` de los recordatorios:
-ahí volvés a la configuración en la que las pérdidas son invisibles.
+palanca es bajar `TICK_LOOKBACK_MINUTES`. Lo que no conviene es bajarlo hasta
+igualar el `max_delay_minutes` de los recordatorios: ahí volvés a la
+configuración en la que las pérdidas son invisibles.
 
 ### Estructura
 
@@ -377,7 +527,8 @@ src/recordatorios/
   tick.py                   la corrida: ventana → envíos
   cli.py                    los comandos
 .github/workflows/
-  tick.yml                  el reloj (cada 5 min)
+  tick-loop.yml             el reloj: 8 bloques de 3 h, bucle interno de 5 min
+  tick.yml                  respaldo del reloj + acciones manuales
   ci.yml                    tests + validación del YAML
   keepalive.yml             evita que GitHub apague el cron
 ```
@@ -399,9 +550,28 @@ negativos.
 acepta unas pocas etiquetas (`<b>`, `<i>`, `<code>`, `<a>`). Un `<` suelto rompe
 el envío: escapalo como `&lt;` o poné `parse_mode: none`.
 
-**Los workflows programados dejaron de correr.** Es la regla de los 60 días de
-inactividad. Reactivalos desde la pestaña *Actions* y verificá que `keepalive`
-esté habilitado.
+**Los workflows programados dejaron de correr.** Puede ser la regla de los 60
+días de inactividad: reactivalos desde la pestaña *Actions* y verificá que
+`keepalive` esté habilitado. Pero antes descartá lo otro, que es más común y no
+se ve igual: Actions **descarta corridas `schedule`** sin apagar nada. El
+workflow figura como *active*, las corridas que sí arrancan salen en verde, y
+lo único raro es que son muchas menos de las que pide el cron. Para medirlo, la
+API pública dice cuántas corridas hubo de verdad:
+
+```bash
+curl -s "https://api.github.com/repos/<usuario>/<repo>/actions/workflows/<id>/runs?per_page=100" \
+  | grep -o '"created_at": "[0-9T:Z-]*"' | cut -c17-26 | sort | uniq -c
+```
+
+Si el conteo diario está muy por debajo de lo que pide el cron, el problema es
+ese, y la respuesta es `tick-loop.yml`
+(ver [Por qué el reloj es un bucle](#por-qué-el-reloj-es-un-bucle-y-no-un-cron-de-5-minutos)).
+
+**Llegó un aviso de "esto se perdió".** El tick encontró una ocurrencia vencida
+hace más de `max_delay_minutes` y la descartó en vez de mandarla tarde. El
+recordatorio en sí no va a llegar; si todavía sirve, mandalo a mano con
+`send-test`. Que haya avisado es la parte que funciona — antes esas pérdidas
+eran invisibles.
 
 **Cambié la hora y llegó el recordatorio viejo.** El tick ya había procesado esa
 ocurrencia. Los cambios aplican a las ocurrencias futuras.

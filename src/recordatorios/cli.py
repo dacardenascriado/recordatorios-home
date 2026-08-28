@@ -19,7 +19,7 @@ from recordatorios.schedule import (
 )
 from recordatorios.store import Store
 from recordatorios.telegram import TelegramError, TelegramSender
-from recordatorios.tick import run_tick
+from recordatorios.tick import lookback_minutes, run_tick
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -89,7 +89,7 @@ def cmd_validate(args: argparse.Namespace, settings: Settings) -> int:
         f"OK: {settings.reminders_file} define {len(recordatorios)} recordatorio(s), "
         f"{activos} activo(s)."
     )
-    for aviso in _warnings(recordatorios):
+    for aviso in _warnings(recordatorios, settings):
         print(f"  aviso: {aviso}")
     return 0
 
@@ -254,12 +254,20 @@ def cmd_send_test(args: argparse.Namespace, settings: Settings) -> int:
     turno = turn_index(reminder, momento) if momento and reminder.needs_turn else 0
 
     sender = TelegramSender(settings.require_token())
-    sender.send_message(
-        chat_id=reminder.chat_id,
-        text=reminder.render(turno),
-        parse_mode=reminder.parse_mode,
-        silent=reminder.silent,
-    )
+    if reminder.is_poll:
+        sender.send_poll(
+            chat_id=reminder.chat_id,
+            question=reminder.render_question(turno),
+            options=reminder.poll_options,
+            silent=reminder.silent,
+        )
+    else:
+        sender.send_message(
+            chat_id=reminder.chat_id,
+            text=reminder.render(turno),
+            parse_mode=reminder.parse_mode,
+            silent=reminder.silent,
+        )
     # Decir qué ocurrencia se imitó: es la forma de notar a tiempo que el
     # mensaje salió con el turno de otro día.
     referencia = (
@@ -303,10 +311,28 @@ class _NullSender:
     def send_message(self, chat_id: str, text: str, parse_mode=None, silent=False) -> dict:
         return {}
 
+    def send_poll(self, chat_id: str, question: str, options, silent=False) -> dict:
+        return {}
 
-def _warnings(recordatorios: list[Reminder]) -> list[str]:
+
+def _warnings(recordatorios: list[Reminder], settings: Settings | None = None) -> list[str]:
     """Cosas legales pero probablemente no deseadas."""
     avisos: list[str] = []
+
+    # Un max_delay que llegue o pase la ventana de recuperación devuelve el
+    # sistema a su peor modo de fallo: lo que se vence ya salió de la ventana
+    # cuando el tick lo miraría, así que se pierde sin fila en la base, sin
+    # línea en el log y sin aviso. Vale la pena gritarlo acá y no descubrirlo
+    # el día que falte un recordatorio.
+    if settings is not None:
+        ventana = lookback_minutes(settings)
+        for reminder in recordatorios:
+            if reminder.enabled and reminder.max_delay_minutes >= ventana:
+                avisos.append(
+                    f"{reminder.id}: max_delay_minutes ({reminder.max_delay_minutes}) "
+                    f"no es menor que la ventana de recuperación ({ventana} min); "
+                    f"una pérdida ahí no dejaría rastro"
+                )
     for reminder in recordatorios:
         if reminder.enabled and not next_runs(reminder, count=1):
             avisos.append(f"{reminder.id}: no tiene ninguna ejecución futura")

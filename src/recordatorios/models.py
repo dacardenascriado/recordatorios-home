@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import html
+import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -18,6 +20,17 @@ DEFAULT_MAX_DELAY_MINUTES = 120
 
 TURNO = "{turno}"
 SIGUIENTE = "{siguiente}"
+
+_ETIQUETA = re.compile(r"<[^>]+>")
+
+
+def plain(text: str) -> str:
+    """El texto sin formato, que es lo único que acepta una encuesta.
+
+    La pregunta de un `sendPoll` no interpreta HTML: un `<b>` llegaría
+    literal. Así que las negritas se caen, pero el texto se conserva.
+    """
+    return html.unescape(_ETIQUETA.sub("", text))
 
 
 @dataclass(frozen=True)
@@ -53,6 +66,12 @@ class Reminder:
     max_delay_minutes: int = DEFAULT_MAX_DELAY_MINUTES
     parse_mode: str | None = "HTML"
     silent: bool = False
+    poll_options: tuple[str, ...] = ()
+
+    @property
+    def is_poll(self) -> bool:
+        """¿Se manda como encuesta en vez de como mensaje?"""
+        return bool(self.poll_options)
 
     @property
     def label(self) -> str:
@@ -79,3 +98,7 @@ class Reminder:
             texto = texto.replace(TURNO, self.rotation[turn % len(self.rotation)])
             texto = texto.replace(SIGUIENTE, siguiente)
         return texto
+
+    def render_question(self, turn: int = 0) -> str:
+        """El mismo texto del turno, pero servible como pregunta de encuesta."""
+        return plain(self.render(turn))

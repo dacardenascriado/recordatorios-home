@@ -21,6 +21,16 @@
 #   {turno}      → a quién le toca hoy.
 #   {siguiente}  → quién sigue en la lista.
 #   message      → un texto, o una lista de textos que se van turnando.
+#   poll         → convierte el aviso en encuesta: el mensaje pasa a ser la
+#                  pregunta y `poll.options` son las respuestas. La encuesta no
+#                  es anónima, así que se ve quién confirmó. Telegram limita la
+#                  pregunta a 300 caracteres y no interpreta HTML: las negritas
+#                  se pierden. `validate` comprueba las dos cosas, midiendo con
+#                  el nombre más largo de la rotación ya sustituido.
+#
+#                  OJO: el bot manda las encuestas pero no lee las respuestas.
+#                  Sirven para que el grupo vea quién confirmó, no para que el
+#                  sistema reaccione.
 #
 # Validá los cambios antes de subirlos:
 #   python -m recordatorios validate
@@ -33,10 +43,23 @@ defaults:
   chat_id: "${TELEGRAM_CHAT_ID}"
   parse_mode: HTML
   # Si un recordatorio queda más atrasado que esto, se descarta en vez de
-  # llegar a destiempo; bajalo en los recordatorios que no sirven de nada tarde.
+  # llegar a destiempo.
+  #
+  # Este es solo el valor de arranque para un recordatorio nuevo: todos los de
+  # abajo fijan el suyo, porque no todos envejecen igual. La pregunta para
+  # elegirlo es siempre la misma: **¿hasta qué hora este mensaje todavía le
+  # sirve a quien lo recibe?** "Saca la carne del congelador" a las 9:00 sigue
+  # sirviendo a las 15:00, porque se cocina a las 18:00; "¿ya sacaste la
+  # basura?" a las 19:00 no sirve a las 2 de la mañana.
+  #
+  # Ponerlo corto no protege de nada: un recordatorio descartado no es un
+  # recordatorio entregado a tiempo, es uno que no llegó. En agosto de 2026 el
+  # almuerzo se perdió por eso — 120 min para todo tiró a las 11:00 un aviso
+  # que a las 12:00 todavía era útil.
+  #
   # Tiene que ser menor que la ventana de recuperación (TICK_LOOKBACK_MINUTES,
-  # 240 min): si fueran iguales, lo vencido caería fuera de la ventana y se
-  # perdería sin quedar registrado en ningún lado.
+  # 720 min): si fueran iguales, lo vencido caería fuera de la ventana y se
+  # perdería sin quedar registrado en ningún lado. `validate` lo comprueba.
   max_delay_minutes: 120
 
 reminders:
@@ -59,8 +82,14 @@ reminders:
   - id: bano-manana
     name: "Aseo del baño — aviso de la mañana"
     cron: "0 5 * * 1,4"
+    max_delay_minutes: 480    # hasta las 13:00; el baño se puede limpiar a cualquier hora del día
     rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
     anchor: 2026-08-03          # el primer turno: lunes 3, PERSONA_1
+    poll:
+      options:
+        - "✅ Sí, yo me encargo"
+        - "🕒 Sí, pero más tarde"
+        - "🙅 Hoy no puedo"
     message:
       - "🧽 Buenos días, {turno}. El baño amaneció esperándote. No es personal, es el calendario. 📅"
       - "🚿 {turno}, hoy es tu gran día. El baño no se limpia solo por más que lo mires con cariño."
@@ -71,6 +100,7 @@ reminders:
   - id: bano-tarde
     name: "Aseo del baño — control de la tarde"
     cron: "0 17 * * 1,4"
+    max_delay_minutes: 240    # hasta las 21:00; es un control, más tarde ya no cambia nada
     rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
     anchor: 2026-08-03          # mismo anchor: comparte el turno con el aviso de la mañana
     message:
@@ -102,8 +132,14 @@ reminders:
   - id: basura-lun-mie-manana
     name: "Basura lun/mié — aviso de la mañana"
     cron: "0 6 * * 1,3"
+    max_delay_minutes: 180    # hasta las 9:00; después ya pasó el camión
     rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
     anchor: 2026-08-03          # lunes 3: PERSONA_1
+    poll:
+      options:
+        - "✅ Sí, yo la saco"
+        - "🕒 Sí, antes de que pase el camión"
+        - "🙅 Hoy no puedo"
     message:
       - "🗑️ El calendario no miente: hoy le toca a {turno} demostrar su talento sacando la basura. 👏"
       - "🗑️ {turno}, la basura tiene una cita con la calle y eres tú el chofer para que esa cita se cumpla. 💪 La próxima vez le toca a {siguiente}, así que ve calentando motores para tu turno. 🗑️"
@@ -114,6 +150,7 @@ reminders:
   - id: basura-lun-mie-tarde
     name: "Basura lun/mié — control de la tarde"
     cron: "0 19 * * 1,3"
+    max_delay_minutes: 180    # hasta las 22:00; control nocturno, no vale despertar a nadie
     rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
     anchor: 2026-08-03          # mismo anchor y mismos días: comparte turno con la mañana
     message:
@@ -126,7 +163,13 @@ reminders:
   - id: basura-viernes-manana
     name: "Basura viernes — aviso de la mañana"
     cron: "0 6 * * 5"
+    max_delay_minutes: 180    # hasta las 9:00; después ya pasó el camión
     anchor: 2026-08-03          # necesario porque hay varios mensajes rotando
+    poll:
+      options:
+        - "✅ Sí, yo la saco"
+        - "🕒 Sí, antes de que pase el camión"
+        - "🙅 Hoy no puedo"
     message:
       - "🗑️ Como hoy es viernes, o sea: ${PERSONA_4} y la basura, su cita semanal. 👏"
       - "♻️ ${PERSONA_4}, cierra la semana como siempre: sacando la basura. Gracias por tanto. 🙌"
@@ -136,6 +179,7 @@ reminders:
   - id: basura-viernes-tarde
     name: "Basura viernes — control de la tarde"
     cron: "0 19 * * 5"
+    max_delay_minutes: 180    # hasta las 22:00; control nocturno, no vale despertar a nadie
     anchor: 2026-08-03
     message:
       - "🌙 ${PERSONA_4}, ¿la basura del viernes ya voló? Cerrar la semana con la casa limpia no tiene precio."
@@ -191,9 +235,15 @@ reminders:
   - id: almuerzo-semana-manana
     name: "Almuerzo de entre semana — saca la carne del congelador"
     cron: "0 9 * * 0,1,2,3,4"    # lun, mar, mié, jue y dom (0 = domingo)
+    max_delay_minutes: 420    # hasta las 16:00; deja 2 h de descongelado antes de cocinar a las 18:00
     rotation: ["${PERSONA_3}", "${PERSONA_1}", "${PERSONA_1}", "${PERSONA_3}", "${PERSONA_4}"]
     anchor: 2026-08-17          # lunes 17: PERSONA_3
     starts_on: 2026-08-17       # antes del anchor todo caería en el turno 0
+    poll:
+      options:
+        - "✅ Sí, yo cocino"
+        - "🧊 Ya saqué la carne"
+        - "🙅 Hoy no puedo"
     message:
       - "🌅 ¡Buenos días, {turno}! Hoy te toca preparar el almuerzo de <b>mañana</b>. 🍳🍗 🧊 Saca del congelador <b>1 bolsa de carne de 1 libra</b> para que se vaya descongelando. Son <b>3 personas</b>. 🥡 ¿Quedó comida de ayer en la nevera? Si hay, úsala para completar y no se desperdicia nada. ¡Confiamos en ti! 😏"
       - "☀️ {turno}, hoy cocinas tú… pero para mañana. 😂 🧊 <b>Del congelador: 1 bolsa de carne de 1 libra</b> para <b>3 personas</b>. 🥡 ¿Revisaste la nevera? Si sobró algo de ayer, úsalo para completar y así no se bota nada. 👨‍🍳"
@@ -205,6 +255,7 @@ reminders:
   - id: almuerzo-semana-tarde
     name: "Almuerzo de entre semana — hora de cocinar"
     cron: "0 18 * * 0,1,2,3,4"   # mismos días que el aviso de la mañana
+    max_delay_minutes: 240    # hasta las 22:00; el almuerzo es de mañana, todavía da tiempo
     rotation: ["${PERSONA_3}", "${PERSONA_1}", "${PERSONA_1}", "${PERSONA_3}", "${PERSONA_4}"]
     anchor: 2026-08-17          # mismo anchor y mismos días: comparte turno con la mañana
     starts_on: 2026-08-17
@@ -228,9 +279,15 @@ reminders:
   - id: almuerzo-fin-semana-manana
     name: "Almuerzo del fin de semana — saca la carne del congelador"
     cron: "0 9 * * 5,6"          # viernes y sábado
+    max_delay_minutes: 420    # hasta las 16:00; deja 2 h de descongelado antes de cocinar a las 18:00
     rotation: ["${PERSONA_2}", "${PERSONA_2}"]
     anchor: 2026-08-21          # viernes 21: PERSONA_2 cocina el almuerzo del sábado
     starts_on: 2026-08-21       # sin esto, los días previos al anchor caen todos en el turno 0
+    poll:
+      options:
+        - "✅ Sí, yo cocino"
+        - "🧊 Ya saqué la carne"
+        - "🙅 Hoy no puedo"
     message:
       - "🌅 ¡Buenos días, {turno}! Hoy preparas el almuerzo de <b>mañana</b>, y mañana somos <b>4 personas</b>. 🍳🍗 🧊 <b>Saca del congelador 1 bolsa de carne de libra y media.</b> 🥡 ¿Quedó comida de ayer en la nevera? Si hay, complétalo con eso. ¡Que alcance para todos! 👨‍🍳🔥"
       - "☀️ {turno}, hoy la olla viene con pasajeros extra: el almuerzo de <b>mañana</b> es para <b>4</b>. 😂 🧊 <b>Del congelador: 1 bolsa de carne de libra y media.</b> 🥡 ¿Sobró algo de ayer? Si hay, entra al plato y no a la basura."
@@ -241,6 +298,7 @@ reminders:
   - id: almuerzo-fin-semana-tarde
     name: "Almuerzo del fin de semana — hora de cocinar"
     cron: "0 18 * * 5,6"         # mismos días que el aviso de la mañana
+    max_delay_minutes: 240    # hasta las 22:00; el almuerzo es de mañana, todavía da tiempo
     rotation: ["${PERSONA_2}", "${PERSONA_2}"]
     anchor: 2026-08-21          # mismo anchor y mismos días: comparte turno con la mañana
     starts_on: 2026-08-21
