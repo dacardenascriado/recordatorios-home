@@ -252,7 +252,7 @@ En la pestaña *Actions* → workflow **tick** → *Run workflow*. El desplegabl
 | `dry-run` | Muestra qué se enviaría en este instante |
 | `history` | Los últimos 50 envíos registrados, con su estado (`sent`, `failed`, `stale`). Es lo que hay que mirar cuando un recordatorio no llegó |
 | `tick` | La corrida normal, igual a la del cron |
-| `descartar` | Da por perdida una ocurrencia (pegá la referencia del dashboard) |
+| `descartar` | Da por perdida una ocurrencia (`descartar_ref`) o todo lo anterior a una fecha (`descartar_antes`) |
 | `send-test` | Manda un recordatorio ya mismo. Poné su `id` en el campo de abajo. Usa el turno de la ocurrencia más cercana —la de hoy si ya disparó— y te dice cuál imitó |
 
 Empezá por `check`. Si sale todo en `[OK ]`, terminás con `send-test` para ver
@@ -591,8 +591,12 @@ importa. Descartar es la tercera salida — la ocurrencia **no se borra**, queda
 en el historial marcada como `descartado`, y deja de pedir acción.
 
 Descartar nunca pisa un `sent`: falsear un envío sería peor que el problema que
-resuelve. Desde la línea de comandos también acepta `--before AAAA-MM-DD`, para
-limpiar de una vez todo lo que quedó atrás:
+resuelve. Y comprueba que la referencia corresponda a una ocurrencia real del
+calendario — una mal pegada solía insertar una fila que no le tocaba a nadie y
+salir en verde, que es la peor manera de fallar.
+
+Para limpiar varios de una vez está `descartar_antes` (una fecha, sin
+referencias que pegar), tanto en el workflow como en la línea de comandos:
 
 ```bash
 python -m recordatorios descartar --ref "basura-viernes-manana@2026-08-28T11:00:00+00:00"

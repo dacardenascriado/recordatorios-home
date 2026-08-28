@@ -387,27 +387,32 @@ def cmd_descartar(args: argparse.Namespace, settings: Settings) -> int:
             )
             return 1
         objetivos = [(rid, occurrence)]
+        corte = None
     else:
         try:
             corte = date.fromisoformat(args.before)
         except ValueError:
             print(f"--before espera AAAA-MM-DD, no {args.before!r}.", file=sys.stderr)
             return 1
-        with Store.open(settings.database_url) as store:
-            resumen = construir(recordatorios, store, dias_atras=90)
-            zona = recordatorios[0].timezone if recordatorios else "America/Bogota"
-            objetivos = [
-                (f.reminder_id, f.occurrence_at)
-                for f in resumen.problemas
-                if f.occurrence_at.astimezone(ZoneInfo(zona)).date() < corte
-            ]
-        if not objetivos:
-            print(f"No hay nada sin salir anterior a {corte}.")
-            return 0
+        objetivos = []
 
     hechos = 0
     salieron = 0
+    # Una sola conexión para todo: con --before hay que leer antes de escribir,
+    # y abrir dos veces despertaría a Neon dos veces por un comando que se usa
+    # de vez en cuando.
     with Store.open(settings.database_url) as store:
+        if corte is not None:
+            zona = recordatorios[0].timezone if recordatorios else "America/Bogota"
+            objetivos = [
+                (f.reminder_id, f.occurrence_at)
+                for f in construir(recordatorios, store, dias_atras=90).problemas
+                if f.occurrence_at.astimezone(ZoneInfo(zona)).date() < corte
+            ]
+            if not objetivos:
+                print(f"No hay nada sin salir anterior a {corte}.")
+                return 0
+
         store.init_schema()
         for rid, occurrence in objetivos:
             if store.dismiss(rid, occurrence, ahora):
