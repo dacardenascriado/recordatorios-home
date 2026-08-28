@@ -15,3 +15,6 @@ dist/
 # Configuración local de los editores
 .idea/
 .vscode/
+
+# Cache local del tick (se regenera solo; no es estado que haga falta guardar)
+.tick-state.json

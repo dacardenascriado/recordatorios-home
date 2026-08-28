@@ -1,9 +1,14 @@
 """El tick: qué recordatorios vencieron hace poco y todavía no se enviaron.
 
-GitHub Actions no es puntual — un cron de */5 puede correr con 10 o 20 minutos
-de retraso, o saltarse una corrida. Por eso el tick no pregunta "¿toca justo
-ahora?" sino "¿qué ocurrencias cayeron en las últimas N horas?". Un retraso se
-recupera en la corrida siguiente en vez de perderse.
+GitHub Actions no es puntual, y a veces directamente no corre: un cron de */5
+puede llegar con 20 minutos de retraso, saltarse corridas, o —como pasó en
+agosto de 2026— bajar a 3 corridas en todo el día. Por eso el tick no pregunta
+"¿toca justo ahora?" sino "¿qué ocurrencias cayeron en las últimas N horas?".
+Un retraso se recupera en la corrida siguiente en vez de perderse.
+
+Lo que la ventana no puede recuperar —un hueco más largo que ella— al menos se
+anota y se avisa por Telegram (`_alert_losses`), para que una pérdida nunca sea
+silenciosa.
 
 De esas ocurrencias, la base de datos dice cuáles ya se enviaron. La clave está
 en el orden: primero se calcula todo con el YAML en la mano, y solo si quedó
@@ -14,8 +19,11 @@ mantiene el consumo de Neon en casi cero.
 
 from __future__ import annotations
 
+import html
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from recordatorios.config import Settings
 from recordatorios.models import Reminder
@@ -44,6 +52,8 @@ class TickResult:
     outcomes: list[Outcome] = field(default_factory=list)
     dry_run: bool = False
     touched_database: bool = False
+    alerts_sent: int = 0
+    alert_error: str | None = None
 
     def of(self, status: str) -> list[Outcome]:
         return [o for o in self.outcomes if o.status == status]
@@ -65,6 +75,10 @@ class TickResult:
         for o in self.outcomes:
             conteo[o.status] = conteo.get(o.status, 0) + 1
         lineas.append("Resumen: " + ", ".join(f"{v} {k}" for k, v in sorted(conteo.items())))
+        if self.alerts_sent:
+            lineas.append(f"Aviso de pérdida enviado a {self.alerts_sent} chat(s).")
+        if self.alert_error:
+            lineas.append(f"No se pudo avisar de la pérdida: {self.alert_error}")
         return "\n".join(lineas)
 
 
@@ -90,6 +104,19 @@ def run_tick(
         for occurrence in occurrences_between(reminder, start, now):
             candidatas.append((reminder, occurrence))
     candidatas.sort(key=lambda item: (item[1], item[0].id))
+
+    # Lo que este mismo runner ya resolvió no se vuelve a preguntar a la base.
+    # Sin esto, la ventana de 12 h saldría carísima: una ocurrencia ya enviada
+    # sigue apareciendo durante 12 h y cada tick abriría la conexión solo para
+    # confirmar lo que ya sabe, dejando el compute de Neon despierto casi 24/7
+    # y agotando la cuota del plan Free a mitad de mes.
+    resueltas = _load_resolved(settings.state_file) if not dry_run else {}
+    ya_resueltas = [(r, occ) for r, occ in candidatas if _key(r, occ) in resueltas]
+    candidatas = [(r, occ) for r, occ in candidatas if _key(r, occ) not in resueltas]
+    result.outcomes.extend(
+        Outcome(r, occ, "already_handled", "resuelto antes en este bloque")
+        for r, occ in ya_resueltas
+    )
 
     # Lo que llegó demasiado tarde ya no se envía, pero sí se anota: un
     # recordatorio que se pierde sin dejar rastro es el peor modo de fallo que
@@ -136,7 +163,101 @@ def run_tick(
     for reminder, occurrence in pendientes:
         result.outcomes.append(_deliver(reminder, occurrence, store, sender, now))
 
+    _alert_losses(result, sender)
+    _save_resolved(settings.state_file, result, start)
     return result
+
+
+# -- caché local de lo ya resuelto ----------------------------------------
+#
+# La base de datos sigue siendo la única fuente de verdad: esto es solo un
+# atajo para no volver a preguntarle lo que este runner ya preguntó. Un caché
+# vacío (runner nuevo, archivo borrado) no cambia el resultado, solo lo hace
+# más caro. Y nunca puede provocar un envío perdido: solo se anotan estados
+# terminales, así que un 'failed' jamás entra y se sigue reintentando.
+
+TERMINALES = frozenset({"sent", "skipped_stale", "already_handled"})
+
+
+def _key(reminder: Reminder, occurrence: datetime) -> str:
+    return f"{reminder.id}@{occurrence.astimezone(timezone.utc).isoformat()}"
+
+
+def _vigente(key: str, window_start: datetime) -> bool:
+    """¿La ocurrencia de esta clave sigue dentro de la ventana?
+
+    Una clave ilegible se tira: el caché se puede reconstruir preguntándole a
+    la base, así que ante la duda conviene olvidar y no arrastrar basura.
+    """
+    try:
+        return datetime.fromisoformat(key.rpartition("@")[2]) >= window_start
+    except ValueError:
+        return False
+
+
+def _load_resolved(path: Path | None) -> dict[str, str]:
+    if path is None:
+        return {}
+    try:
+        datos = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return datos if isinstance(datos, dict) else {}
+
+
+def _save_resolved(path: Path | None, result: TickResult, window_start: datetime) -> None:
+    """Reescribe el caché con lo resuelto, tirando lo que ya salió de la ventana."""
+    if path is None:
+        return
+    resueltas = {
+        _key(o.reminder, o.occurrence_at): o.status
+        for o in result.outcomes
+        if o.status in TERMINALES and o.occurrence_at >= window_start
+    }
+    if not resueltas:
+        return
+    previas = {k: v for k, v in _load_resolved(path).items() if _vigente(k, window_start)}
+    previas.update(resueltas)
+    try:
+        Path(path).write_text(json.dumps(previas), encoding="utf-8")
+    except OSError:
+        pass  # el caché es un atajo, no un requisito: sin él todo sigue funcionando
+
+
+def _alert_losses(result: TickResult, sender: Sender) -> None:
+    """Avisa al chat cuando un recordatorio se perdió por completo.
+
+    Sin esto, una pérdida solo existe como una línea en un log de Actions que
+    nadie mira: el sistema puede estar caído días y la primera señal es que
+    alguien nota que no llegó un mensaje. Fue exactamente lo que pasó cuando
+    Actions dejó de honrar el cron.
+
+    Solo se avisa de `skipped_stale`, que es lo definitivamente perdido. Un
+    `failed` sigue dentro de la ventana y el próximo tick lo reintenta, así que
+    avisar de eso sería ruido. Y como `mark_stale` solo devuelve `skipped_stale`
+    la primera vez que ve la ocurrencia, cada pérdida avisa una sola vez.
+    """
+    perdidas = result.of("skipped_stale")
+    if not perdidas:
+        return
+
+    por_chat: dict[str, list[Outcome]] = {}
+    for outcome in perdidas:
+        por_chat.setdefault(outcome.reminder.chat_id, []).append(outcome)
+
+    for chat_id, outcomes in por_chat.items():
+        lineas = ["⚠️ <b>Esto se perdió: no salió a tiempo</b>", ""]
+        for outcome in outcomes:
+            cuando = local_str(outcome.occurrence_at, outcome.reminder.timezone)
+            lineas.append(f"• {html.escape(outcome.reminder.name)} — era para {cuando}")
+        lineas += ["", "El reloj (workflow <code>tick</code>) estuvo caído o muy atrasado."]
+
+        try:
+            sender.send_message(chat_id=chat_id, text="\n".join(lineas), parse_mode="HTML")
+        except Exception as exc:  # avisar es un extra: no puede tumbar el tick
+            result.alert_error = f"{type(exc).__name__}: {exc}"
+            return
+        result.alerts_sent += 1
 
 
 def _deliver(

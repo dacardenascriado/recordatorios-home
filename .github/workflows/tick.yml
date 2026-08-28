@@ -1,9 +1,19 @@
 name: tick
 
-# El reloj de la aplicación. GitHub no garantiza puntualidad (una corrida de
-# */5 puede llegar con 10-20 minutos de retraso, o saltarse), por eso el tick
-# trabaja por ventanas: recupera lo que se haya vencido desde la corrida
-# anterior en vez de mirar solo el instante actual.
+# Red de respaldo del reloj, y la consola de mando a mano.
+#
+# El reloj principal es `tick-loop.yml`: Actions no honra este cron `*/5` —
+# descarta la mayoría de las corridas y llegó a dejar huecos de 10 horas—, así
+# que depender de él para la puntualidad no funciona. Se queda igual porque las
+# corridas sueltas que sí arrancan pueden tapar un bloque de tick-loop que no
+# haya arrancado, y porque este es el workflow con el desplegable de acciones
+# (check, dry-run, history, send-test) para operar el sistema a mano.
+#
+# Que este y tick-loop coincidan no duplica mensajes: `store.claim()` es un
+# upsert atómico y solo una corrida se queda con cada ocurrencia.
+#
+# En cualquier caso el tick trabaja por ventanas: recupera lo que se haya
+# vencido desde la corrida anterior en vez de mirar solo el instante actual.
 on:
   schedule:
     - cron: "*/5 * * * *"
@@ -63,6 +73,13 @@ jobs:
           # bash es una vía de inyección.
           ACCION: ${{ inputs.accion }}
           SEND_TEST_ID: ${{ inputs.send_test_id }}
+          # Ventana angosta a propósito, distinta de la de tick-loop (12 h).
+          # Cada corrida de acá estrena runner, así que arranca sin el caché
+          # local que le ahorra consultas a la base: con la ventana ancha,
+          # cada una despertaría a Neon para reconfirmar hasta 12 h de
+          # ocurrencias ya resueltas. Registrar las pérdidas largas es tarea
+          # del bloque de tick-loop, que sí conserva el caché.
+          TICK_LOOKBACK_MINUTES: "240"
         run: |
           # En las corridas por cron no hay inputs: ahí siempre es un tick.
           case "${ACCION:-tick}" in

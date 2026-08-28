@@ -3,6 +3,7 @@ base de datos cuando no hay nada que hacer."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -111,7 +112,9 @@ def test_descarta_lo_que_llega_demasiado_tarde(store, settings):
     resultado = run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(hours=1))
 
     assert [o.status for o in resultado.outcomes] == ["skipped_stale"]
-    assert sender.enviados == []
+    # El recordatorio en sí no sale; lo único que va al chat es el aviso de que
+    # se perdió.
+    assert "sacar la basura" not in [texto for _, texto in sender.enviados]
     # Descartar sí toca la base: perder un recordatorio sin dejar rastro es el
     # peor modo de fallo, así que queda anotado.
     assert resultado.touched_database is True
@@ -262,6 +265,125 @@ def test_los_lunes_alternos_no_se_pisan(store, settings):
         assert [texto for _, texto in sender.enviados][-1] == esperado
 
     assert [texto for _, texto in sender.enviados] == ["A", "B", "A", "B"]
+
+
+def test_el_cache_evita_volver_a_preguntarle_a_la_base(store, settings, tmp_path):
+    # La ocurrencia enviada sigue en la ventana durante horas. Sin caché, cada
+    # tick de ese rato abre la conexión solo para confirmar lo que ya sabe, y
+    # con una ventana de 12 h eso deja el compute de Neon despierto casi 24/7.
+    con_cache = replace(settings, state_file=tmp_path / "tick-state.json")
+    sender = FakeSender()
+    run_tick([lunes()], store, sender, con_cache, now=OCURRENCIA + timedelta(minutes=2))
+
+    resultado = run_tick([lunes()], store, sender, con_cache, now=OCURRENCIA + timedelta(minutes=7))
+
+    assert [o.status for o in resultado.outcomes] == ["already_handled"]
+    assert resultado.touched_database is False
+    assert len(sender.enviados) == 1
+
+
+def test_un_fallo_no_entra_al_cache(store, settings, tmp_path):
+    # Si un fallo se cacheara, el reintento no ocurriría nunca: el caché estaría
+    # convirtiendo un envío recuperable en una pérdida.
+    con_cache = replace(settings, state_file=tmp_path / "tick-state.json")
+    sender = FakeSender(fallos=1)
+    run_tick([lunes()], store, sender, con_cache, now=OCURRENCIA + timedelta(minutes=2))
+
+    resultado = run_tick([lunes()], store, sender, con_cache, now=OCURRENCIA + timedelta(minutes=7))
+
+    assert [o.status for o in resultado.outcomes] == ["sent"]
+    assert len(sender.enviados) == 1
+
+
+def test_un_cache_ilegible_no_rompe_el_tick(store, settings, tmp_path):
+    # El caché es un atajo de costo, no una fuente de verdad: si no se puede
+    # leer, se preguntará a la base y ya.
+    estado = tmp_path / "tick-state.json"
+    estado.write_text("{esto no es json", encoding="utf-8")
+    con_cache = replace(settings, state_file=estado)
+    sender = FakeSender()
+
+    resultado = run_tick([lunes()], store, sender, con_cache, now=OCURRENCIA + timedelta(minutes=2))
+
+    assert [o.status for o in resultado.outcomes] == ["sent"]
+
+
+def test_el_dry_run_no_toca_el_cache(store, settings, tmp_path):
+    estado = tmp_path / "tick-state.json"
+    con_cache = replace(settings, state_file=estado)
+    sender = FakeSender()
+
+    run_tick([lunes()], store, sender, con_cache, now=OCURRENCIA + timedelta(minutes=2), dry_run=True)
+
+    assert estado.exists() is False
+
+
+def test_una_perdida_se_avisa_por_telegram(store, settings):
+    # Sin este aviso, una pérdida solo existe en un log de Actions que nadie
+    # mira. Es lo que hizo que una caída de dos días se notara recién cuando
+    # alguien echó de menos un mensaje.
+    sender = FakeSender()
+    reminder = lunes(max_delay_minutes=30)
+
+    resultado = run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(hours=1))
+
+    assert resultado.alerts_sent == 1
+    assert resultado.alert_error is None
+    chat, texto = sender.enviados[-1]
+    assert chat == "555"
+    assert "no salió a tiempo" in texto
+    assert reminder.name in texto
+
+
+def test_la_perdida_se_avisa_una_sola_vez(store, settings):
+    # La ocurrencia vencida sigue en la ventana durante horas. Avisar en cada
+    # tick sería peor que no avisar: el grupo aprendería a ignorar el aviso.
+    sender = FakeSender()
+    reminder = lunes(max_delay_minutes=30)
+    run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(hours=1))
+
+    resultado = run_tick(
+        [reminder], store, sender, settings, now=OCURRENCIA + timedelta(hours=1, minutes=5)
+    )
+
+    assert resultado.alerts_sent == 0
+    assert len(sender.enviados) == 1
+
+
+def test_un_envio_normal_no_dispara_aviso(store, settings):
+    sender = FakeSender()
+
+    resultado = run_tick([lunes()], store, sender, settings, now=OCURRENCIA + timedelta(minutes=3))
+
+    assert resultado.alerts_sent == 0
+    assert [texto for _, texto in sender.enviados] == ["sacar la basura"]
+
+
+def test_si_el_aviso_falla_el_tick_igual_termina(store, settings):
+    # Avisar es un extra. Que Telegram esté caído no puede convertir un tick
+    # que hizo su trabajo en un tick que revienta.
+    sender = FakeSender(fallos=99)
+    reminder = lunes(max_delay_minutes=30)
+
+    resultado = run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(hours=1))
+
+    assert [o.status for o in resultado.outcomes] == ["skipped_stale"]
+    assert resultado.alerts_sent == 0
+    assert "Telegram no responde" in resultado.alert_error
+    assert [f.status for f in store.history()] == ["stale"]
+
+
+def test_el_dry_run_no_avisa(store, settings):
+    sender = FakeSender()
+    reminder = lunes(max_delay_minutes=30)
+
+    resultado = run_tick(
+        [reminder], store, sender, settings, now=OCURRENCIA + timedelta(hours=1), dry_run=True
+    )
+
+    assert [o.status for o in resultado.outcomes] == ["skipped_stale"]
+    assert resultado.alerts_sent == 0
+    assert sender.enviados == []
 
 
 def test_el_historial_registra_los_envios(store, settings):
