@@ -1,0 +1,97 @@
+name: dashboard
+
+# Publica en GitHub Pages la página de estado: qué debía salir y qué salió.
+#
+# Pages sirve archivos estáticos, así que la página no consulta nada en vivo —
+# no podría: no hay backend, y meter la credencial de Neon en un HTML público
+# está fuera de discusión. El cruce contra la base lo hace este job, que corre
+# en el runner y sí tiene los secrets; lo único que se publica es el HTML.
+#
+# Por eso mismo la página NO lleva nombres. El repo es público y el sitio
+# también, así que los ${PERSONA_n} —que viven en secrets justamente para no
+# estar acá— no entran. Ids de recordatorio y horas alcanzan para saber si el
+# reloj está funcionando.
+on:
+  # Al terminar cada bloque de tick-loop: así la página se refresca al ritmo
+  # del reloj, sin pedirle a Actions más arranques programados (que es
+  # exactamente lo que dejó de honrar).
+  workflow_run:
+    workflows: [tick-loop]
+    types: [completed]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Cada corrida despierta a Neon, así que no conviene apurarla más que esto.
+# Ocho veces al día es barato; cada hora ya sería un mordisco a la cuota.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar dependencias
+        run: pip install -e ".[postgres]"
+
+      - name: Generar la página
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # El chat_id y los nombres hacen falta para leer el YAML, pero no
+          # llegan al HTML: la página habla de ids y de horas.
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          PERSONA_1: ${{ secrets.PERSONA_1 }}
+          PERSONA_2: ${{ secrets.PERSONA_2 }}
+          PERSONA_3: ${{ secrets.PERSONA_3 }}
+          PERSONA_4: ${{ secrets.PERSONA_4 }}
+        run: python -m recordatorios dashboard --out site
+
+      # Última línea de defensa: si algún día alguien mete un nombre en la
+      # plantilla, esto para el deploy en vez de publicarlo. Un secret filtrado
+      # a una URL pública no se puede despublicar.
+      - name: Comprobar que no se publican nombres
+        env:
+          PERSONA_1: ${{ secrets.PERSONA_1 }}
+          PERSONA_2: ${{ secrets.PERSONA_2 }}
+          PERSONA_3: ${{ secrets.PERSONA_3 }}
+          PERSONA_4: ${{ secrets.PERSONA_4 }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          for valor in "$PERSONA_1" "$PERSONA_2" "$PERSONA_3" "$PERSONA_4" "$TELEGRAM_CHAT_ID"; do
+            [ -z "$valor" ] && continue
+            if grep -qF -- "$valor" site/index.html; then
+              echo "::error::la página contiene un secret; no se publica" >&2
+              exit 1
+            fi
+          done
+          echo "Sin nombres ni chat_id en la página."
+
+      - uses: actions/configure-pages@v5
+        with:
+          # Deja Pages habilitado sin pasar por Settings la primera vez.
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
