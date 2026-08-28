@@ -183,3 +183,93 @@ reminders:
     with pytest.raises(ConfigError) as exc:
         load_reminders(write(tmp_path, contenido), env={"PERSONA_1": "Ana"})
     assert any("PERSONA_2" in p for p in exc.value.problems)
+
+
+def _con_poll(cuerpo: str) -> str:
+    return f"""
+version: 1
+defaults:
+  chat_id: "555"
+reminders:
+  - id: basura
+    cron: "0 7 * * 1"
+{cuerpo}
+"""
+
+
+def test_poll_valido_queda_en_el_recordatorio(tmp_path):
+    contenido = _con_poll(
+        '    message: "¿sacas la basura?"\n'
+        "    poll:\n"
+        "      options:\n"
+        '        - "Sí"\n'
+        '        - "No"\n'
+    )
+
+    reminder = load_reminders(write(tmp_path, contenido), env={})[0]
+
+    assert reminder.is_poll is True
+    assert reminder.poll_options == ("Sí", "No")
+
+
+def test_una_encuesta_de_una_sola_respuesta_es_error(tmp_path):
+    contenido = _con_poll(
+        '    message: "¿sacas la basura?"\n'
+        "    poll:\n"
+        "      options:\n"
+        '        - "Sí"\n'
+    )
+
+    with pytest.raises(ConfigError) as exc:
+        load_reminders(write(tmp_path, contenido), env={})
+    assert "entre 2 y 12 respuestas" in exc.value.report()
+
+
+def test_una_respuesta_demasiado_larga_es_error(tmp_path):
+    contenido = _con_poll(
+        '    message: "¿sacas la basura?"\n'
+        "    poll:\n"
+        "      options:\n"
+        f'        - "{"x" * 101}"\n'
+        '        - "No"\n'
+    )
+
+    with pytest.raises(ConfigError) as exc:
+        load_reminders(write(tmp_path, contenido), env={})
+    assert "admite 100" in exc.value.report()
+
+
+def test_una_pregunta_larga_se_mide_con_el_nombre_puesto(tmp_path):
+    # El mensaje crudo entra en 300, pero con el nombre sustituido no. Medirlo
+    # sin sustituir dejaría pasar un YAML que después falla al enviar.
+    plantilla = "{turno} " + "x" * 285
+    assert len(plantilla) <= 300
+    contenido = _con_poll(
+        f'    message: "{plantilla}"\n'
+        "    rotation: [Ana, Maria Fernanda Restrepo]\n"
+        "    anchor: 2026-08-03\n"
+        "    poll:\n"
+        "      options:\n"
+        '        - "Sí"\n'
+        '        - "No"\n'
+    )
+
+    with pytest.raises(ConfigError) as exc:
+        load_reminders(write(tmp_path, contenido), env={})
+    assert "admite 300" in exc.value.report()
+
+
+def test_las_etiquetas_html_no_cuentan_para_la_pregunta(tmp_path):
+    # Una encuesta no interpreta HTML, así que el <b> ni llega: no debería
+    # gastar caracteres del límite.
+    contenido = _con_poll(
+        f'    message: "<b>{"x" * 295}</b>"\n'
+        "    poll:\n"
+        "      options:\n"
+        '        - "Sí"\n'
+        '        - "No"\n'
+    )
+
+    reminder = load_reminders(write(tmp_path, contenido), env={})[0]
+
+    assert len(reminder.render_question()) == 295

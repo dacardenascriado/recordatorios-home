@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 import httpx
@@ -10,6 +11,14 @@ import httpx
 API_BASE = "https://api.telegram.org"
 TIMEOUT_SECONDS = 20.0
 MAX_ATTEMPTS = 3
+
+# Límites de sendPoll. Los comprueba el loader, para que un YAML que Telegram
+# rechazaría no llegue nunca a main: acá el fallo sería un recordatorio que no
+# sale, y de esos ya tuvimos.
+POLL_QUESTION_MAX = 300
+POLL_OPTION_MAX = 100
+POLL_MIN_OPTIONS = 2
+POLL_MAX_OPTIONS = 12
 
 
 class TelegramError(RuntimeError):
@@ -40,6 +49,14 @@ class Sender(Protocol):
         silent: bool = False,
     ) -> dict[str, Any]: ...
 
+    def send_poll(
+        self,
+        chat_id: str,
+        question: str,
+        options: Sequence[str],
+        silent: bool = False,
+    ) -> dict[str, Any]: ...
+
 
 class TelegramSender:
     def __init__(self, token: str, base_url: str = API_BASE) -> None:
@@ -59,6 +76,33 @@ class TelegramSender:
         if silent:
             payload["disable_notification"] = True
         return self._call("sendMessage", payload)
+
+    def send_poll(
+        self,
+        chat_id: str,
+        question: str,
+        options: Sequence[str],
+        silent: bool = False,
+    ) -> dict[str, Any]:
+        """Manda una encuesta abierta, para que alguien confirme que se encarga.
+
+        `is_anonymous=False` es el punto de todo el asunto: una encuesta anónima
+        diría cuántos contestaron, no quién, y lo que se quiere saber es
+        justamente si contestó la persona a la que le toca.
+        """
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "question": question,
+            # InputPollOption, que es el tipo que documenta la Bot API desde la
+            # 7.3. Una lista de textos pelados todavía se acepta por
+            # compatibilidad, pero api.telegram.org siempre corre la versión
+            # nueva y acá un rechazo es un recordatorio que no llega.
+            "options": [{"text": texto} for texto in options],
+            "is_anonymous": False,
+        }
+        if silent:
+            payload["disable_notification"] = True
+        return self._call("sendPoll", payload)
 
     def get_me(self) -> dict[str, Any]:
         """Datos del bot. Sirve para comprobar que el token vale."""

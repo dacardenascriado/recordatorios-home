@@ -254,12 +254,20 @@ def cmd_send_test(args: argparse.Namespace, settings: Settings) -> int:
     turno = turn_index(reminder, momento) if momento and reminder.needs_turn else 0
 
     sender = TelegramSender(settings.require_token())
-    sender.send_message(
-        chat_id=reminder.chat_id,
-        text=reminder.render(turno),
-        parse_mode=reminder.parse_mode,
-        silent=reminder.silent,
-    )
+    if reminder.is_poll:
+        sender.send_poll(
+            chat_id=reminder.chat_id,
+            question=reminder.render_question(turno),
+            options=reminder.poll_options,
+            silent=reminder.silent,
+        )
+    else:
+        sender.send_message(
+            chat_id=reminder.chat_id,
+            text=reminder.render(turno),
+            parse_mode=reminder.parse_mode,
+            silent=reminder.silent,
+        )
     # Decir qué ocurrencia se imitó: es la forma de notar a tiempo que el
     # mensaje salió con el turno de otro día.
     referencia = (
@@ -301,6 +309,9 @@ class _NullSender:
     """Emisor que no hace nada, para --dry-run."""
 
     def send_message(self, chat_id: str, text: str, parse_mode=None, silent=False) -> dict:
+        return {}
+
+    def send_poll(self, chat_id: str, question: str, options, silent=False) -> dict:
         return {}
 
 

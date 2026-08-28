@@ -7,7 +7,9 @@ depender de eso.
 
 from __future__ import annotations
 
-from recordatorios.telegram import redact
+import httpx
+
+from recordatorios.telegram import TelegramSender, redact
 
 TOKEN = "8870339268:AAF6S7FlAqbcrzFG-mQZSBY0mtELX0uyPk8"
 
@@ -34,3 +36,55 @@ def test_deja_intacto_lo_que_no_es_el_token():
 def test_sin_token_no_rompe():
     assert redact("algo", None) == "algo"
     assert redact("algo", "") == "algo"
+
+
+class _RespuestaOk:
+    status_code = 200
+
+    @staticmethod
+    def json():
+        return {"ok": True, "result": {"message_id": 1}}
+
+
+class _ClienteEspia:
+    """Captura el payload que se le manda a la Bot API."""
+
+    ultimo: dict = {}
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        return None
+
+    def post(self, url, json):
+        type(self).ultimo = {"url": url, "payload": json}
+        return _RespuestaOk()
+
+
+def test_send_poll_manda_las_opciones_como_input_poll_option(monkeypatch):
+    # La Bot API documenta InputPollOption desde la 7.3. Si esto se mandara como
+    # lista de textos y Telegram dejara de aceptarla, el síntoma sería un
+    # recordatorio que no llega — el fallo que menos se nota.
+    monkeypatch.setattr(httpx, "Client", _ClienteEspia)
+
+    TelegramSender(TOKEN).send_poll("555", "¿te encargas?", ["Sí", "No"])
+
+    payload = _ClienteEspia.ultimo["payload"]
+    assert payload["options"] == [{"text": "Sí"}, {"text": "No"}]
+    assert payload["question"] == "¿te encargas?"
+    assert payload["chat_id"] == "555"
+    # Anónima no serviría: lo que se quiere saber es si contestó quien le toca.
+    assert payload["is_anonymous"] is False
+    assert _ClienteEspia.ultimo["url"].endswith("/sendPoll")
+
+
+def test_send_poll_silencioso_no_notifica(monkeypatch):
+    monkeypatch.setattr(httpx, "Client", _ClienteEspia)
+
+    TelegramSender(TOKEN).send_poll("555", "¿te encargas?", ["Sí", "No"], silent=True)
+
+    assert _ClienteEspia.ultimo["payload"]["disable_notification"] is True

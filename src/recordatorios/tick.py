@@ -275,12 +275,20 @@ def _deliver(
     turno = turn_index(reminder, occurrence) if reminder.needs_turn else 0
 
     try:
-        sender.send_message(
-            chat_id=reminder.chat_id,
-            text=reminder.render(turno),
-            parse_mode=reminder.parse_mode,
-            silent=reminder.silent,
-        )
+        if reminder.is_poll:
+            sender.send_poll(
+                chat_id=reminder.chat_id,
+                question=reminder.render_question(turno),
+                options=reminder.poll_options,
+                silent=reminder.silent,
+            )
+        else:
+            sender.send_message(
+                chat_id=reminder.chat_id,
+                text=reminder.render(turno),
+                parse_mode=reminder.parse_mode,
+                silent=reminder.silent,
+            )
     except Exception as exc:  # el envío no debe tumbar el resto del tick
         detalle = f"{type(exc).__name__}: {exc}"
         # Queda en 'failed': sigue dentro de la ventana, así que el próximo tick

@@ -294,9 +294,49 @@ valida el archivo en cada push, así que un typo no llega a producción.
 | `max_delay_minutes` | no | Si queda más atrasado que esto, se descarta en vez de llegar a destiempo (y queda anotado como `stale`, con aviso al chat). Por defecto 120, pero conviene fijarlo por recordatorio — ver [Cuánto puede llegar tarde](#cuánto-puede-llegar-tarde-cada-recordatorio) |
 | `parse_mode` | no | `HTML`, `Markdown`, `MarkdownV2` o `none` |
 | `silent` | no | `true` envía sin notificación sonora |
+| `poll` | no | Convierte el aviso en encuesta — ver [Encuestas](#encuestas-para-que-alguien-confirme) |
 
 `defaults` acepta los mismos campos salvo `id`, `name`, `cron`, `message`,
 `rotation`, `every_weeks` y `week_offset`.
+
+### Encuestas, para que alguien confirme
+
+Un recordatorio puede llegar como encuesta en vez de como mensaje: el texto
+pasa a ser la pregunta y `poll.options` son las respuestas.
+
+```yaml
+  - id: basura-lun-mie-manana
+    cron: "0 6 * * 1,3"
+    poll:
+      options:
+        - "✅ Sí, yo la saco"
+        - "🕒 Sí, antes de que pase el camión"
+        - "🙅 Hoy no puedo"
+    message:
+      - "🗑️ Hoy le toca a {turno} sacar la basura."
+```
+
+La encuesta **no es anónima**, que es todo el punto: lo que se quiere saber no
+es cuántos contestaron sino si contestó la persona a la que le toca.
+
+**El bot manda las encuestas pero no lee las respuestas.** Sirven para que el
+grupo vea quién confirmó, no para que el sistema reaccione — insistirle a quien
+no contestó necesitaría `getUpdates` o un webhook, y estado en la base.
+
+Dos límites de Telegram que conviene tener presentes, porque el síntoma de
+pasarse es un recordatorio que no llega:
+
+- **La pregunta admite 300 caracteres** y no interpreta HTML, así que las
+  negritas se pierden. Los mensajes del almuerzo ya rozan los 280.
+- **Entre 2 y 12 respuestas**, de hasta 100 caracteres cada una.
+
+`validate` comprueba las dos cosas en cada push, y mide la pregunta con el
+**nombre más largo de la rotación ya sustituido** — medirla con el `{turno}` sin
+sustituir dejaría pasar un YAML que después falla al enviar.
+
+En este repo la llevan los cinco avisos de la mañana (los que preguntan si vas
+a hacer la tarea). Los controles de la tarde siguen siendo mensajes, que ya
+preguntan si *ya* la hiciste.
 
 ### Cuánto puede llegar tarde cada recordatorio
 

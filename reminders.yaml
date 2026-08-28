@@ -21,6 +21,16 @@
 #   {turno}      → a quién le toca hoy.
 #   {siguiente}  → quién sigue en la lista.
 #   message      → un texto, o una lista de textos que se van turnando.
+#   poll         → convierte el aviso en encuesta: el mensaje pasa a ser la
+#                  pregunta y `poll.options` son las respuestas. La encuesta no
+#                  es anónima, así que se ve quién confirmó. Telegram limita la
+#                  pregunta a 300 caracteres y no interpreta HTML: las negritas
+#                  se pierden. `validate` comprueba las dos cosas, midiendo con
+#                  el nombre más largo de la rotación ya sustituido.
+#
+#                  OJO: el bot manda las encuestas pero no lee las respuestas.
+#                  Sirven para que el grupo vea quién confirmó, no para que el
+#                  sistema reaccione.
 #
 # Validá los cambios antes de subirlos:
 #   python -m recordatorios validate
@@ -75,6 +85,11 @@ reminders:
     max_delay_minutes: 480    # hasta las 13:00; el baño se puede limpiar a cualquier hora del día
     rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
     anchor: 2026-08-03          # el primer turno: lunes 3, PERSONA_1
+    poll:
+      options:
+        - "✅ Sí, yo me encargo"
+        - "🕒 Sí, pero más tarde"
+        - "🙅 Hoy no puedo"
     message:
       - "🧽 Buenos días, {turno}. El baño amaneció esperándote. No es personal, es el calendario. 📅"
       - "🚿 {turno}, hoy es tu gran día. El baño no se limpia solo por más que lo mires con cariño."
@@ -120,6 +135,11 @@ reminders:
     max_delay_minutes: 180    # hasta las 9:00; después ya pasó el camión
     rotation: ["${PERSONA_1}", "${PERSONA_2}", "${PERSONA_3}"]
     anchor: 2026-08-03          # lunes 3: PERSONA_1
+    poll:
+      options:
+        - "✅ Sí, yo la saco"
+        - "🕒 Sí, antes de que pase el camión"
+        - "🙅 Hoy no puedo"
     message:
       - "🗑️ El calendario no miente: hoy le toca a {turno} demostrar su talento sacando la basura. 👏"
       - "🗑️ {turno}, la basura tiene una cita con la calle y eres tú el chofer para que esa cita se cumpla. 💪 La próxima vez le toca a {siguiente}, así que ve calentando motores para tu turno. 🗑️"
@@ -145,6 +165,11 @@ reminders:
     cron: "0 6 * * 5"
     max_delay_minutes: 180    # hasta las 9:00; después ya pasó el camión
     anchor: 2026-08-03          # necesario porque hay varios mensajes rotando
+    poll:
+      options:
+        - "✅ Sí, yo la saco"
+        - "🕒 Sí, antes de que pase el camión"
+        - "🙅 Hoy no puedo"
     message:
       - "🗑️ Como hoy es viernes, o sea: ${PERSONA_4} y la basura, su cita semanal. 👏"
       - "♻️ ${PERSONA_4}, cierra la semana como siempre: sacando la basura. Gracias por tanto. 🙌"
@@ -214,6 +239,11 @@ reminders:
     rotation: ["${PERSONA_3}", "${PERSONA_1}", "${PERSONA_1}", "${PERSONA_3}", "${PERSONA_4}"]
     anchor: 2026-08-17          # lunes 17: PERSONA_3
     starts_on: 2026-08-17       # antes del anchor todo caería en el turno 0
+    poll:
+      options:
+        - "✅ Sí, yo cocino"
+        - "🧊 Ya saqué la carne"
+        - "🙅 Hoy no puedo"
     message:
       - "🌅 ¡Buenos días, {turno}! Hoy te toca preparar el almuerzo de <b>mañana</b>. 🍳🍗 🧊 Saca del congelador <b>1 bolsa de carne de 1 libra</b> para que se vaya descongelando. Son <b>3 personas</b>. 🥡 ¿Quedó comida de ayer en la nevera? Si hay, úsala para completar y no se desperdicia nada. ¡Confiamos en ti! 😏"
       - "☀️ {turno}, hoy cocinas tú… pero para mañana. 😂 🧊 <b>Del congelador: 1 bolsa de carne de 1 libra</b> para <b>3 personas</b>. 🥡 ¿Revisaste la nevera? Si sobró algo de ayer, úsalo para completar y así no se bota nada. 👨‍🍳"
@@ -253,6 +283,11 @@ reminders:
     rotation: ["${PERSONA_2}", "${PERSONA_2}"]
     anchor: 2026-08-21          # viernes 21: PERSONA_2 cocina el almuerzo del sábado
     starts_on: 2026-08-21       # sin esto, los días previos al anchor caen todos en el turno 0
+    poll:
+      options:
+        - "✅ Sí, yo cocino"
+        - "🧊 Ya saqué la carne"
+        - "🙅 Hoy no puedo"
     message:
       - "🌅 ¡Buenos días, {turno}! Hoy preparas el almuerzo de <b>mañana</b>, y mañana somos <b>4 personas</b>. 🍳🍗 🧊 <b>Saca del congelador 1 bolsa de carne de libra y media.</b> 🥡 ¿Quedó comida de ayer en la nevera? Si hay, complétalo con eso. ¡Que alcance para todos! 👨‍🍳🔥"
       - "☀️ {turno}, hoy la olla viene con pasajeros extra: el almuerzo de <b>mañana</b> es para <b>4</b>. 😂 🧊 <b>Del congelador: 1 bolsa de carne de libra y media.</b> 🥡 ¿Sobró algo de ayer? Si hay, entra al plato y no a la basura."

@@ -395,3 +395,58 @@ def test_el_historial_registra_los_envios(store, settings):
     assert historial[0].reminder_id == "lunes"
     assert historial[0].status == "sent"
     assert historial[0].occurrence_at == OCURRENCIA
+
+
+class FakePollSender(FakeSender):
+    """Además de mensajes, registra encuestas."""
+
+    def __init__(self, fallos: int = 0) -> None:
+        super().__init__(fallos)
+        self.encuestas: list[tuple[str, str, tuple[str, ...]]] = []
+
+    def send_poll(self, chat_id, question, options, silent=False):
+        if self.fallos_restantes > 0:
+            self.fallos_restantes -= 1
+            raise RuntimeError("Telegram no responde")
+        self.encuestas.append((chat_id, question, tuple(options)))
+        return {"message_id": len(self.encuestas)}
+
+
+def test_un_recordatorio_con_poll_se_manda_como_encuesta(store, settings):
+    sender = FakePollSender()
+    reminder = lunes(
+        messages=("<b>{turno}</b>, ¿sacas la basura?",),
+        rotation=("Ana",),
+        poll_options=("Sí", "No"),
+    )
+
+    resultado = run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(minutes=2))
+
+    assert [o.status for o in resultado.outcomes] == ["sent"]
+    assert sender.enviados == []
+    chat, pregunta, opciones = sender.encuestas[0]
+    assert chat == "555"
+    # Las encuestas no interpretan HTML: la pregunta va sin etiquetas.
+    assert pregunta == "Ana, ¿sacas la basura?"
+    assert opciones == ("Sí", "No")
+
+
+def test_sin_poll_se_sigue_mandando_como_mensaje(store, settings):
+    sender = FakePollSender()
+
+    run_tick([lunes()], store, sender, settings, now=OCURRENCIA + timedelta(minutes=2))
+
+    assert sender.encuestas == []
+    assert sender.enviados == [("555", "sacar la basura")]
+
+
+def test_una_encuesta_que_falla_se_reintenta_como_cualquier_envio(store, settings):
+    sender = FakePollSender(fallos=1)
+    reminder = lunes(poll_options=("Sí", "No"))
+
+    resultado = run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(minutes=2))
+    assert [o.status for o in resultado.outcomes] == ["failed"]
+
+    resultado = run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(minutes=7))
+    assert [o.status for o in resultado.outcomes] == ["sent"]
+    assert len(sender.encuestas) == 1
