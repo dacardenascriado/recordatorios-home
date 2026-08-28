@@ -526,7 +526,8 @@ src/recordatorios/
   store.py                  Neon/SQLite: claims e historial (conexión perezosa)
   telegram.py               Bot API con reintentos
   tick.py                   la corrida: ventana → envíos
-  dashboard.py              el cruce calendario × base → la página de estado
+  dashboard.py              el cruce calendario × base → los datos de la página
+  render.py                 la página en sí: HTML, estilos, la tira de latidos
   cli.py                    los comandos
 .github/workflows/
   tick-loop.yml             el reloj: 8 bloques de 3 h, bucle interno de 5 min
@@ -570,6 +571,20 @@ dice el mensaje de Telegram, que es donde corresponde. Además del cuidado en la
 plantilla, el workflow hace `grep` de cada secret sobre el HTML antes de
 publicar y aborta el deploy si encuentra alguno.
 
+### El botón de reenviar, y por qué no es de un clic
+
+Cada problema trae **Mandarlo ahora**, que abre el workflow `tick` en Actions, y
+**Copiar id** para pegar en `send_test_id`.
+
+Es un enlace y no un botón de verdad, y no por pereza: Pages sirve estáticos, así
+que la página no tiene con quién hablar. Reenviar exige disparar un workflow, y
+eso exige un token de GitHub. Un token en un HTML público lo puede usar
+cualquiera que abra la URL — no es una opción. GitHub tampoco admite prellenar
+los inputs de un `workflow_dispatch` por URL, de ahí el botón de copiar.
+
+Para un botón real haría falta algo que guarde el token del lado del servidor:
+un Worker de Cloudflare en su capa gratuita alcanzaría. Ahí sí, un clic.
+
 ### Cómo se genera
 
 Pages sirve archivos estáticos: no hay backend, y meter la credencial de Neon en
@@ -579,6 +594,12 @@ tiene los secrets, y lo único que se publica es el HTML resultante:
 ```bash
 python -m recordatorios dashboard --out site
 ```
+
+La página no carga nada externo —ni fuentes, ni scripts, ni analítica—: se
+sirve entera desde un solo archivo. El único enlace saliente es el que va a
+Actions. Los datos van en monoespaciada con cifras tabulares porque esto es un
+registro y las horas se comparan en columna; abajo de 640px cada fila de la
+tabla se convierte en ficha para no obligar a hacer scroll lateral.
 
 Se despliega por artifact (`actions/deploy-pages`), así que no ensucia el repo
 con commits. Corre al terminar cada bloque de `tick-loop` —unas 8 veces al día—
