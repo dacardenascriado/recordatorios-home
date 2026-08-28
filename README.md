@@ -252,6 +252,7 @@ En la pestaña *Actions* → workflow **tick** → *Run workflow*. El desplegabl
 | `dry-run` | Muestra qué se enviaría en este instante |
 | `history` | Los últimos 50 envíos registrados, con su estado (`sent`, `failed`, `stale`). Es lo que hay que mirar cuando un recordatorio no llegó |
 | `tick` | La corrida normal, igual a la del cron |
+| `descartar` | Da por perdida una ocurrencia (pegá la referencia del dashboard) |
 | `send-test` | Manda un recordatorio ya mismo. Poné su `id` en el campo de abajo. Usa el turno de la ocurrencia más cercana —la de hoy si ya disparó— y te dice cuál imitó |
 
 Empezá por `check`. Si sale todo en `[OK ]`, terminás con `send-test` para ver
@@ -378,6 +379,7 @@ python -m recordatorios tick              # el envío real (lo que corre en Acti
 python -m recordatorios send-test --id X  # manda uno a mano, con el turno de la ocurrencia más cercana
 python -m recordatorios history           # últimos envíos registrados
 python -m recordatorios dashboard         # arma la página de estado en site/
+python -m recordatorios descartar --ref X # da por perdida una ocurrencia
 python -m recordatorios init-db           # crea las tablas
 ```
 
@@ -554,6 +556,7 @@ esperada de los últimos 7 días queda en uno de estos estados:
 | `vencido` | Un tick la vio, pero ya era tarde. Quedó anotada como `stale` |
 | `fallido` | Telegram rechazó el envío; se reintenta solo |
 | **`perdido`** | **Ningún tick llegó a verla: no hay ni fila en la base** |
+| `descartado` | Alguien la vio y la dio por perdida. Sigue en el historial, no cuenta como problema |
 
 `perdido` es el que importa. Es el fallo que no deja rastro en ningún lado y que
 solo se ve cruzando las dos fuentes — el que estuvo dos días pasando sin que
@@ -571,10 +574,30 @@ dice el mensaje de Telegram, que es donde corresponde. Además del cuidado en la
 plantilla, el workflow hace `grep` de cada secret sobre el HTML antes de
 publicar y aborta el deploy si encuentra alguno.
 
-### El botón de reenviar, y por qué no es de un clic
+### Reenviar o descartar, según el día
 
-Cada problema trae **Mandarlo ahora**, que abre el workflow `tick` en Actions, y
-**Copiar id** para pegar en `send_test_id`.
+Cada problema trae un botón, y cuál depende de cuándo estaba programado:
+
+- **Lo de hoy** → **Mandarlo ahora**, con **Copiar id** para pegar en
+  `send_test_id`. Todavía le puede servir a alguien.
+- **Lo de días anteriores** → **Descartar**, con **Copiar referencia**
+  (`id@fecha-hora`) para pegar en `descartar_ref`.
+
+La distinción no es cosmética. Mandar el aviso del baño del jueves un sábado no
+le sirve a nadie, y un botón que invita a hacerlo es peor que no tener botón.
+Pero dejar la pérdida para siempre en la lista tampoco sirve: una alarma que no
+se puede apagar se termina ignorando, y entonces tampoco se ve la que sí
+importa. Descartar es la tercera salida — la ocurrencia **no se borra**, queda
+en el historial marcada como `descartado`, y deja de pedir acción.
+
+Descartar nunca pisa un `sent`: falsear un envío sería peor que el problema que
+resuelve. Desde la línea de comandos también acepta `--before AAAA-MM-DD`, para
+limpiar de una vez todo lo que quedó atrás:
+
+```bash
+python -m recordatorios descartar --ref "basura-viernes-manana@2026-08-28T11:00:00+00:00"
+python -m recordatorios descartar --before 2026-08-28
+```
 
 Es un enlace y no un botón de verdad, y no por pereza: Pages sirve estáticos, así
 que la página no tiene con quién hablar. Reenviar exige disparar un workflow, y

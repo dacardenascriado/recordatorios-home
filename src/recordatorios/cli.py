@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from recordatorios.config import ConfigError, Settings, load_dotenv
 from recordatorios.dashboard import construir
@@ -92,6 +93,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="usuario/repo: habilita los botones de reenvío (por defecto, $GITHUB_REPOSITORY)",
     )
     tablero.set_defaults(handler=cmd_dashboard)
+
+    descartar = subs.add_parser(
+        "descartar",
+        help="Da por perdida una ocurrencia: sale de la lista de problemas, sigue en el historial",
+    )
+    descartar.add_argument("--ref", help="id@fecha-hora, tal como lo copia el dashboard")
+    descartar.add_argument(
+        "--before", help="AAAA-MM-DD: descarta todo lo que quedó sin salir antes de esa fecha"
+    )
+    descartar.set_defaults(handler=cmd_descartar)
 
     return parser
 
@@ -326,6 +337,64 @@ def cmd_dashboard(args: argparse.Namespace, settings: Settings) -> int:
     )
     for fila in problemas:
         print(f"  [{fila.estado}] {fila.reminder_id} — {local_str(fila.occurrence_at, zona)}")
+    return 0
+
+
+def cmd_descartar(args: argparse.Namespace, settings: Settings) -> int:
+    """Reconoce una pérdida para que deje de pedir acción.
+
+    Reenviar el aviso del baño de anteayer no le sirve a nadie, pero dejarlo
+    para siempre en la lista tampoco: una alarma que no se puede apagar se
+    termina ignorando, y entonces tampoco se ve la que sí importa. Esto no borra
+    nada — la ocurrencia sigue en el historial, marcada como descartada.
+    """
+    if bool(args.ref) == bool(args.before):
+        print("Usá exactamente uno: --ref id@fecha-hora, o --before AAAA-MM-DD.", file=sys.stderr)
+        return 1
+
+    recordatorios = load_reminders(settings.reminders_file)
+    ahora = datetime.now(timezone.utc)
+
+    if args.ref:
+        rid, _, cuando = args.ref.partition("@")
+        if not rid or not cuando:
+            print(f"Referencia inválida: {args.ref!r}. Se espera id@fecha-hora.", file=sys.stderr)
+            return 1
+        try:
+            occurrence = datetime.fromisoformat(cuando)
+        except ValueError:
+            print(f"No entiendo la fecha {cuando!r} de la referencia.", file=sys.stderr)
+            return 1
+        objetivos = [(rid, occurrence)]
+    else:
+        try:
+            corte = date.fromisoformat(args.before)
+        except ValueError:
+            print(f"--before espera AAAA-MM-DD, no {args.before!r}.", file=sys.stderr)
+            return 1
+        with Store.open(settings.database_url) as store:
+            resumen = construir(recordatorios, store, dias_atras=90)
+            zona = recordatorios[0].timezone if recordatorios else "America/Bogota"
+            objetivos = [
+                (f.reminder_id, f.occurrence_at)
+                for f in resumen.problemas
+                if f.occurrence_at.astimezone(ZoneInfo(zona)).date() < corte
+            ]
+        if not objetivos:
+            print(f"No hay nada sin salir anterior a {corte}.")
+            return 0
+
+    hechos = 0
+    with Store.open(settings.database_url) as store:
+        store.init_schema()
+        for rid, occurrence in objetivos:
+            if store.dismiss(rid, occurrence, ahora):
+                hechos += 1
+                print(f"  descartado {rid} — {occurrence.isoformat()}")
+            else:
+                print(f"  sin cambios {rid} — {occurrence.isoformat()} (ya salió o ya estaba)")
+
+    print(f"{hechos} de {len(objetivos)} descartado(s).")
     return 0
 
 
