@@ -15,8 +15,14 @@ on:
   # Al terminar cada bloque de tick-loop: así la página se refresca al ritmo
   # del reloj, sin pedirle a Actions más arranques programados (que es
   # exactamente lo que dejó de honrar).
+  #
+  # Y al terminar una corrida MANUAL de tick, porque ahí es donde viven
+  # `descartar` y `send-test`: un botón cuya función es hacer desaparecer algo
+  # de esta página no sirve de nada si la página no se vuelve a generar. Las
+  # corridas de tick por cron quedan excluidas en el `if` del job — son cientos
+  # al día y cada publicación despierta a Neon.
   workflow_run:
-    workflows: [tick-loop]
+    workflows: [tick-loop, tick]
     types: [completed]
   push:
     branches: [main]
@@ -37,6 +43,12 @@ jobs:
   publicar:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Todo refresca la página menos una cosa: una corrida de tick disparada por
+    # el cron. Esas son rutina y no cambian nada que se vea acá.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.name == 'tick-loop' ||
+      github.event.workflow_run.event == 'workflow_dispatch'
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}

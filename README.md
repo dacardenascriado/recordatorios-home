@@ -628,6 +628,12 @@ Se despliega por artifact (`actions/deploy-pages`), así que no ensucia el repo
 con commits. Corre al terminar cada bloque de `tick-loop` —unas 8 veces al día—
 y no cada hora, porque cada corrida despierta a Neon.
 
+También corre al terminar una corrida **manual** de `tick`, que es donde viven
+`descartar` y `send-test`: un botón cuya función es hacer desaparecer algo de
+esta página no sirve de nada si la página no se vuelve a generar. Las corridas
+de `tick` por cron quedan excluidas — son cientos al día, y cada publicación
+despertaría a Neon para nada.
+
 Que la página esté vieja no es el indicador: el número de problemas se calcula
 contra la base y es correcto sin importar cuándo se generó. Pero si «Página
 generada» quedó muchas horas atrás, el reloj está caído.

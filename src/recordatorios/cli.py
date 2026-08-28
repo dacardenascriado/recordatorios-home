@@ -365,6 +365,27 @@ def cmd_descartar(args: argparse.Namespace, settings: Settings) -> int:
         except ValueError:
             print(f"No entiendo la fecha {cuando!r} de la referencia.", file=sys.stderr)
             return 1
+
+        # Sin esto, una referencia mal pegada inserta una fila que no le
+        # corresponde a ninguna ocurrencia real: el comando sale en verde y en
+        # el dashboard no cambia nada. Un descarte que dice que funcionó y no
+        # hizo nada es peor que uno que falla.
+        reminder = next((r for r in recordatorios if r.id == rid), None)
+        if reminder is None:
+            print(
+                f"No existe el recordatorio {rid!r}. Disponibles: "
+                f"{', '.join(sorted(r.id for r in recordatorios))}",
+                file=sys.stderr,
+            )
+            return 1
+        margen = timedelta(seconds=1)
+        if not occurrences_between(reminder, occurrence - margen, occurrence + margen):
+            print(
+                f"{rid} no dispara en {occurrence.isoformat()}. Copiá la referencia "
+                f"del dashboard en vez de escribirla a mano.",
+                file=sys.stderr,
+            )
+            return 1
         objetivos = [(rid, occurrence)]
     else:
         try:
@@ -385,6 +406,7 @@ def cmd_descartar(args: argparse.Namespace, settings: Settings) -> int:
             return 0
 
     hechos = 0
+    salieron = 0
     with Store.open(settings.database_url) as store:
         store.init_schema()
         for rid, occurrence in objetivos:
@@ -392,10 +414,17 @@ def cmd_descartar(args: argparse.Namespace, settings: Settings) -> int:
                 hechos += 1
                 print(f"  descartado {rid} — {occurrence.isoformat()}")
             else:
-                print(f"  sin cambios {rid} — {occurrence.isoformat()} (ya salió o ya estaba)")
+                # dismiss solo se niega ante un 'sent': lo demás lo pisa, así que
+                # descartar dos veces la misma no es un fallo.
+                salieron += 1
+                print(f"  intacto {rid} — {occurrence.isoformat()} (ese sí salió)")
 
     print(f"{hechos} de {len(objetivos)} descartado(s).")
-    return 0
+    if hechos:
+        print("El dashboard se regenera al terminar esta corrida.")
+    # Pedir descartar algo que sí se envió es un malentendido, no una rutina:
+    # conviene que la corrida quede en rojo y no en verde.
+    return 1 if salieron else 0
 
 
 def cmd_init_db(args: argparse.Namespace, settings: Settings) -> int:
