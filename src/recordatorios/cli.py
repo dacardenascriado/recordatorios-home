@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from recordatorios.config import ConfigError, Settings, load_dotenv
-from recordatorios.dashboard import construir, render
+from recordatorios.dashboard import construir
+from recordatorios.render import render
 from recordatorios.loader import load_reminders
 from recordatorios.models import Reminder
 from recordatorios.schedule import (
@@ -84,6 +86,11 @@ def _build_parser() -> argparse.ArgumentParser:
     tablero.add_argument("--out", default="site", help="Directorio de salida (por defecto 'site')")
     tablero.add_argument("--days-back", type=int, default=7)
     tablero.add_argument("--days-ahead", type=int, default=14)
+    tablero.add_argument(
+        "--repo",
+        default=os.environ.get("GITHUB_REPOSITORY", ""),
+        help="usuario/repo: habilita los botones de reenvío (por defecto, $GITHUB_REPOSITORY)",
+    )
     tablero.set_defaults(handler=cmd_dashboard)
 
     return parser
@@ -308,7 +315,9 @@ def cmd_dashboard(args: argparse.Namespace, settings: Settings) -> int:
     zona = recordatorios[0].timezone if recordatorios else "America/Bogota"
     destino = Path(args.out)
     destino.mkdir(parents=True, exist_ok=True)
-    (destino / "index.html").write_text(render(resumen, zona), encoding="utf-8")
+    (destino / "index.html").write_text(
+        render(resumen, zona, repo=args.repo or None), encoding="utf-8"
+    )
 
     problemas = resumen.problemas
     print(

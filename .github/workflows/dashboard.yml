@@ -84,11 +84,11 @@ jobs:
           done
           echo "Sin nombres ni chat_id en la página."
 
-      - uses: actions/configure-pages@v5
-        with:
-          # Deja Pages habilitado sin pasar por Settings la primera vez.
-          enablement: true
-
+      # Sin configure-pages: sirve para que un generador de sitios sepa su ruta
+      # base, y esto es un index.html autocontenido sin rutas absolutas. Su
+      # `enablement` tampoco alcanzaba para crear el sitio —el GITHUB_TOKEN no
+      # tiene permisos de administración— así que era un punto de fallo que no
+      # aportaba nada. Pages se habilita una vez en Settings > Pages.
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

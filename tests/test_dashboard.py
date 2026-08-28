@@ -13,14 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from recordatorios.dashboard import (
-    ENVIADO,
-    EN_CURSO,
-    PERDIDO,
-    VENCIDO,
-    construir,
-    render,
-)
+from recordatorios.dashboard import ENVIADO, EN_CURSO, PERDIDO, VENCIDO, construir
+from recordatorios.render import render
 from recordatorios.models import Reminder
 from recordatorios.store import Store
 
@@ -122,12 +116,41 @@ def test_la_pagina_no_contiene_nombres(store):
 
 def test_la_pagina_no_carga_recursos_externos(store):
     # Se sirve desde Pages sin backend; cualquier recurso externo sería una
-    # dependencia que se puede caer y un rastreador que nadie pidió.
+    # dependencia que se puede caer y un rastreador que nadie pidió. El único
+    # enlace saliente permitido es el que lleva a Actions a reenviar algo, y
+    # ese aparece solo si se pasó --repo.
     html = render(construir([semanal()], store, now=LUNES + timedelta(days=1)))
 
+    assert "<script src" not in html
+    assert "<link" not in html
     assert 'src="http' not in html
     assert 'href="http' not in html
-    assert "<script" not in html
+
+
+def test_el_unico_enlace_externo_es_el_de_reenviar(store):
+    reminder = semanal(max_delay_minutes=30)
+    resumen = construir([reminder], store, now=LUNES + timedelta(days=1))
+    assert resumen.problemas, "el caso de prueba necesita un problema"
+
+    html = render(resumen, repo="usuario/repo")
+
+    assert "https://github.com/usuario/repo/actions/workflows/tick.yml" in html
+    assert 'rel="noopener"' in html
+    # El id va en el botón de copiar: GitHub no admite prellenar el input.
+    assert 'data-copiar="basura"' in html
+
+
+def test_sin_repo_no_hay_botones(store):
+    # En local no hay a dónde enlazar, y un botón que no lleva a ningún lado es
+    # peor que ninguno.
+    reminder = semanal(max_delay_minutes=30)
+
+    html = render(construir([reminder], store, now=LUNES + timedelta(days=1)))
+
+    assert "Mandarlo ahora" not in html
+    assert "data-copiar" not in html
+    # El id sigue estando, para poder copiarlo a mano.
+    assert "basura" in html
 
 
 def test_el_futuro_no_se_pasa_del_horizonte(store):
