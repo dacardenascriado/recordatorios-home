@@ -377,6 +377,7 @@ python -m recordatorios tick --dry-run    # qué se enviaría ahora mismo
 python -m recordatorios tick              # el envío real (lo que corre en Actions)
 python -m recordatorios send-test --id X  # manda uno a mano, con el turno de la ocurrencia más cercana
 python -m recordatorios history           # últimos envíos registrados
+python -m recordatorios dashboard         # arma la página de estado en site/
 python -m recordatorios init-db           # crea las tablas
 ```
 
@@ -525,13 +526,67 @@ src/recordatorios/
   store.py                  Neon/SQLite: claims e historial (conexión perezosa)
   telegram.py               Bot API con reintentos
   tick.py                   la corrida: ventana → envíos
+  dashboard.py              el cruce calendario × base → la página de estado
   cli.py                    los comandos
 .github/workflows/
   tick-loop.yml             el reloj: 8 bloques de 3 h, bucle interno de 5 min
   tick.yml                  respaldo del reloj + acciones manuales
+  dashboard.yml             genera y publica la página en Pages
   ci.yml                    tests + validación del YAML
   keepalive.yml             evita que GitHub apague el cron
 ```
+
+---
+
+## El dashboard
+
+Una página en GitHub Pages que contesta la pregunta que costó tanto responder en
+agosto de 2026: **de todo lo que tenía que salir, ¿qué salió?**
+
+Cruza el calendario del YAML contra la tabla `deliveries`, y cada ocurrencia
+esperada de los últimos 7 días queda en uno de estos estados:
+
+| Estado | Qué significa |
+|---|---|
+| `enviado` | Salió. Con la hora real de salida |
+| `en curso` | Venció hace poco y todavía está dentro de `max_delay_minutes` |
+| `vencido` | Un tick la vio, pero ya era tarde. Quedó anotada como `stale` |
+| `fallido` | Telegram rechazó el envío; se reintenta solo |
+| **`perdido`** | **Ningún tick llegó a verla: no hay ni fila en la base** |
+
+`perdido` es el que importa. Es el fallo que no deja rastro en ningún lado y que
+solo se ve cruzando las dos fuentes — el que estuvo dos días pasando sin que
+nadie se enterara.
+
+### Por qué no tiene nombres
+
+El repo es público y un sitio de Pages en un repo público también lo es, servido
+desde una URL indexable. Publicar «hoy le toca a *[nombre]*» desharía justamente
+lo que el diseño de `${PERSONA_n}` protege, y un secret que llega a una URL
+pública no se puede despublicar.
+
+Así que la página habla de ids de recordatorio y de horas. A quién le toca ya lo
+dice el mensaje de Telegram, que es donde corresponde. Además del cuidado en la
+plantilla, el workflow hace `grep` de cada secret sobre el HTML antes de
+publicar y aborta el deploy si encuentra alguno.
+
+### Cómo se genera
+
+Pages sirve archivos estáticos: no hay backend, y meter la credencial de Neon en
+un HTML público está fuera de discusión. El cruce lo hace el runner, que sí
+tiene los secrets, y lo único que se publica es el HTML resultante:
+
+```bash
+python -m recordatorios dashboard --out site
+```
+
+Se despliega por artifact (`actions/deploy-pages`), así que no ensucia el repo
+con commits. Corre al terminar cada bloque de `tick-loop` —unas 8 veces al día—
+y no cada hora, porque cada corrida despierta a Neon.
+
+Que la página esté vieja no es el indicador: el número de problemas se calcula
+contra la base y es correcto sin importar cuándo se generó. Pero si «Página
+generada» quedó muchas horas atrás, el reloj está caído.
 
 ---
 

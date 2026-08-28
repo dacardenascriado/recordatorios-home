@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from recordatorios.config import ConfigError, Settings, load_dotenv
+from recordatorios.dashboard import construir, render
 from recordatorios.loader import load_reminders
 from recordatorios.models import Reminder
 from recordatorios.schedule import (
@@ -75,6 +77,14 @@ def _build_parser() -> argparse.ArgumentParser:
     historial = subs.add_parser("history", help="Últimos envíos registrados")
     historial.add_argument("--limit", type=int, default=20)
     historial.set_defaults(handler=cmd_history)
+
+    tablero = subs.add_parser(
+        "dashboard", help="Genera la página de estado que se publica en GitHub Pages"
+    )
+    tablero.add_argument("--out", default="site", help="Directorio de salida (por defecto 'site')")
+    tablero.add_argument("--days-back", type=int, default=7)
+    tablero.add_argument("--days-ahead", type=int, default=14)
+    tablero.set_defaults(handler=cmd_dashboard)
 
     return parser
 
@@ -278,6 +288,35 @@ def cmd_send_test(args: argparse.Namespace, settings: Settings) -> int:
         f"Enviado '{reminder.id}' a {reminder.chat_id} — como la ocurrencia "
         f"del {referencia}" + (f", turno de {quien}." if quien else ".")
     )
+    return 0
+
+
+def cmd_dashboard(args: argparse.Namespace, settings: Settings) -> int:
+    """Arma la página estática. No envía nada y no escribe en la base.
+
+    Corre en el runner, que sí tiene los secrets; lo que se publica es solo el
+    HTML resultante. Por eso la página puede cruzar el YAML contra Neon sin que
+    ninguna credencial salga de Actions.
+    """
+    recordatorios = load_reminders(settings.reminders_file)
+
+    with Store.open(settings.database_url) as store:
+        resumen = construir(
+            recordatorios, store, dias_atras=args.days_back, dias_adelante=args.days_ahead
+        )
+
+    zona = recordatorios[0].timezone if recordatorios else "America/Bogota"
+    destino = Path(args.out)
+    destino.mkdir(parents=True, exist_ok=True)
+    (destino / "index.html").write_text(render(resumen, zona), encoding="utf-8")
+
+    problemas = resumen.problemas
+    print(
+        f"Página escrita en {destino / 'index.html'} — {len(resumen.pasado)} ocurrencia(s) "
+        f"en los últimos {args.days_back} días, {len(problemas)} con problemas."
+    )
+    for fila in problemas:
+        print(f"  [{fila.estado}] {fila.reminder_id} — {local_str(fila.occurrence_at, zona)}")
     return 0
 
 

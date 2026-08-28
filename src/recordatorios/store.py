@@ -284,6 +284,39 @@ class Store:
             for row in rows
         ]
 
+    def deliveries_between(self, start: datetime, end: datetime) -> list[DeliveryRow]:
+        """Estado actual de cada ocurrencia en la ventana [start, end].
+
+        Lee `deliveries` y no `delivery_log` a propósito: el log tiene una fila
+        por intento (un 'failed' seguido de un 'sent' son dos), y acá se quiere
+        una respuesta por ocurrencia — en qué terminó.
+
+        `logged_at` trae el `sent_at` cuando lo hay, y si no el `claimed_at`:
+        el dashboard lo usa para decir a qué hora salió de verdad.
+        """
+        rows = self._query(
+            self._sql(
+                """
+                SELECT reminder_id, occurrence_at, status, detail,
+                       COALESCE(sent_at, claimed_at)
+                FROM deliveries
+                WHERE occurrence_at >= {p} AND occurrence_at <= {p}
+                ORDER BY occurrence_at
+                """
+            ),
+            (self._dialect.encode_ts(start), self._dialect.encode_ts(end)),
+        )
+        return [
+            DeliveryRow(
+                reminder_id=row[0],
+                occurrence_at=self._dialect.decode_ts(row[1]),
+                status=row[2],
+                detail=row[3],
+                logged_at=self._dialect.decode_ts(row[4]),
+            )
+            for row in rows
+        ]
+
     # -- utilidades -------------------------------------------------------
 
     def _sql(self, template: str) -> str:
