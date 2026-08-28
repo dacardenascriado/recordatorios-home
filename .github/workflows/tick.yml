@@ -35,7 +35,11 @@ on:
         type: string
         default: ""
       descartar_ref:
-        description: "Solo para descartar: la referencia que copia el dashboard (id@fecha-hora)"
+        description: "descartar: la referencia que copia el dashboard (id@fecha-hora)"
+        type: string
+        default: ""
+      descartar_antes:
+        description: "descartar: AAAA-MM-DD — descarta de una vez todo lo que quedó sin salir antes de esa fecha"
         type: string
         default: ""
 
@@ -79,6 +83,7 @@ jobs:
           ACCION: ${{ inputs.accion }}
           SEND_TEST_ID: ${{ inputs.send_test_id }}
           DESCARTAR_REF: ${{ inputs.descartar_ref }}
+          DESCARTAR_ANTES: ${{ inputs.descartar_antes }}
           # Ventana angosta a propósito, distinta de la de tick-loop (12 h).
           # Cada corrida de acá estrena runner, así que arranca sin el caché
           # local que le ahorra consultas a la base: con la ventana ancha,
@@ -100,11 +105,20 @@ jobs:
               python -m recordatorios send-test --id "$SEND_TEST_ID"
               ;;
             descartar)
-              if [ -z "$DESCARTAR_REF" ]; then
-                echo "Falta 'descartar_ref': copiala del dashboard." >&2
+              # Una ocurrencia suelta (ref, copiada del dashboard) o todo lo
+              # anterior a una fecha. Lo segundo evita pegar referencias, que es
+              # donde se cuela el error de copiado.
+              if [ -n "$DESCARTAR_REF" ] && [ -n "$DESCARTAR_ANTES" ]; then
+                echo "Llená 'descartar_ref' o 'descartar_antes', no los dos." >&2
+                exit 1
+              elif [ -n "$DESCARTAR_REF" ]; then
+                python -m recordatorios descartar --ref "$DESCARTAR_REF"
+              elif [ -n "$DESCARTAR_ANTES" ]; then
+                python -m recordatorios descartar --before "$DESCARTAR_ANTES"
+              else
+                echo "Falta uno de los dos: 'descartar_ref' (copiala del dashboard) o 'descartar_antes' (AAAA-MM-DD)." >&2
                 exit 1
               fi
-              python -m recordatorios descartar --ref "$DESCARTAR_REF"
               ;;
             *)         python -m recordatorios tick ;;
           esac

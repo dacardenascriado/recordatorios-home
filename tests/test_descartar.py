@@ -102,3 +102,30 @@ def test_hace_falta_ref_o_before_pero_no_los_dos(entorno, capsys):
     assert cli.main(["descartar"]) == 1
     assert cli.main(["descartar", "--ref", REF, "--before", "2026-08-28"]) == 1
     assert "exactamente uno" in capsys.readouterr().err
+
+
+def test_before_descarta_todo_lo_anterior_a_la_fecha(entorno):
+    # El jueves 27 tiene ocurrencia a las 17:00 Bogotá; el lunes 24 también.
+    lunes = datetime(2026, 8, 24, 22, 0, tzinfo=UTC)
+
+    assert cli.main(["descartar", "--before", "2026-08-28"]) == 0
+
+    assert estado(entorno, "bano-tarde", OCURRENCIA) == "dismissed"
+    assert estado(entorno, "bano-tarde", lunes) == "dismissed"
+
+
+def test_before_no_toca_lo_del_dia_del_corte_ni_lo_posterior(entorno):
+    # El corte es estricto: lo del propio día todavía puede servir.
+    assert cli.main(["descartar", "--before", "2026-08-27"]) == 0
+
+    assert estado(entorno, "bano-tarde", OCURRENCIA) is None
+
+
+def test_before_sin_nada_que_descartar_no_es_un_fallo(entorno, capsys):
+    assert cli.main(["descartar", "--before", "2020-01-01"]) == 0
+    assert "No hay nada sin salir" in capsys.readouterr().out
+
+
+def test_before_con_una_fecha_ilegible_se_planta(entorno, capsys):
+    assert cli.main(["descartar", "--before", "28/08/2026"]) == 1
+    assert "espera AAAA-MM-DD" in capsys.readouterr().err
