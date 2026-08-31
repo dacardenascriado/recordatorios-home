@@ -310,15 +310,30 @@ pasa a ser la pregunta y `poll.options` son las respuestas.
     cron: "0 6 * * 1,3"
     poll:
       options:
-        - "✅ Sí, yo la saco"
-        - "🕒 Sí, antes de que pase el camión"
-        - "🙅 Hoy no puedo"
+        - "🙅 Hoy no puedo, ¿quién está en la casa para que me haga el favor?"
+        - "🔄 Ya lo cambié con alguien"
     message:
       - "🗑️ Hoy le toca a {turno} sacar la basura."
 ```
 
+**Las opciones son solo novedades, nunca confirmaciones.** El silencio significa
+"lo hago". A nadie hay que pedirle que avise cada día que sí va a hacer lo que
+le toca, y una encuesta que hay que contestar siempre se termina dejando de
+contestar — con lo cual tampoco se ve la respuesta que sí importaba. Contestar
+queda reservado para cuando pasa algo que impide hacerlo, y entonces esa
+respuesta llama la atención por sí sola.
+
+Son dos opciones porque Telegram no acepta una sola, y porque separan los dos
+casos que llevan a acciones distintas: hace falta que alguien cubra, o ya está
+resuelto entre ellos.
+
+La primera **pide el favor en vez de mandar**. "Que la saque alguien más" suena
+a orden y deja a quien no puede repartiendo trabajo; "¿quién está en la casa
+para que me haga el favor?" es alguien pidiendo ayuda. En una casa esa
+diferencia es todo, y el texto de un botón es donde se nota.
+
 La encuesta **no es anónima**, que es todo el punto: lo que se quiere saber no
-es cuántos contestaron sino si contestó la persona a la que le toca.
+es cuántos contestaron sino quién avisó que no puede.
 
 **El bot manda las encuestas pero no lee las respuestas.** Sirven para que el
 grupo vea quién confirmó, no para que el sistema reaccione — insistirle a quien

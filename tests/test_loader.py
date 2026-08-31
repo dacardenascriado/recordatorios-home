@@ -273,3 +273,33 @@ def test_las_etiquetas_html_no_cuentan_para_la_pregunta(tmp_path):
     reminder = load_reminders(write(tmp_path, contenido), env={})[0]
 
     assert len(reminder.render_question()) == 295
+
+
+def test_las_encuestas_del_repo_solo_ofrecen_novedades():
+    """Ninguna opción confirma que sí se va a hacer la tarea.
+
+    Es una decisión, no un descuido: el silencio significa "lo hago". Una
+    encuesta que hay que contestar todos los días se termina dejando de
+    contestar, y entonces tampoco se ve la respuesta que sí importaba. Este test
+    existe para que volver a agregar un "sí" sea una decisión explícita y no un
+    descuido al editar el YAML.
+    """
+    raiz = Path(__file__).resolve().parents[1]
+    recordatorios = load_reminders(
+        raiz / "reminders.yaml",
+        env={
+            "TELEGRAM_CHAT_ID": "0",
+            "PERSONA_1": "Persona-1",
+            "PERSONA_2": "Persona-2",
+            "PERSONA_3": "Persona-3",
+            "PERSONA_4": "Persona-4",
+        },
+    )
+
+    con_encuesta = [r for r in recordatorios if r.is_poll]
+    assert con_encuesta, "se esperaban recordatorios con encuesta"
+
+    for reminder in con_encuesta:
+        for opcion in reminder.poll_options:
+            assert not opcion.startswith("✅"), f"{reminder.id}: {opcion!r} parece una confirmación"
+            assert "Sí," not in opcion, f"{reminder.id}: {opcion!r} parece una confirmación"
