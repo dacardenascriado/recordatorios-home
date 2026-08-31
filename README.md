@@ -310,7 +310,7 @@ pasa a ser la pregunta y `poll.options` son las respuestas.
     cron: "0 6 * * 1,3"
     poll:
       options:
-        - "🙅 Hoy no puedo — que la saque alguien más"
+        - "🙅 Hoy no puedo, ¿quién está en la casa para que me haga el favor?"
         - "🔄 Ya lo cambié con alguien"
     message:
       - "🗑️ Hoy le toca a {turno} sacar la basura."
@@ -326,6 +326,11 @@ respuesta llama la atención por sí sola.
 Son dos opciones porque Telegram no acepta una sola, y porque separan los dos
 casos que llevan a acciones distintas: hace falta que alguien cubra, o ya está
 resuelto entre ellos.
+
+La primera **pide el favor en vez de mandar**. "Que la saque alguien más" suena
+a orden y deja a quien no puede repartiendo trabajo; "¿quién está en la casa
+para que me haga el favor?" es alguien pidiendo ayuda. En una casa esa
+diferencia es todo, y el texto de un botón es donde se nota.
 
 La encuesta **no es anónima**, que es todo el punto: lo que se quiere saber no
 es cuántos contestaron sino quién avisó que no puede.

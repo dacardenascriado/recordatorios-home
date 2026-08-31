@@ -36,6 +36,12 @@
 #                  los dos casos que llevan a acciones distintas: hace falta que
 #                  alguien cubra, o ya está resuelto entre ustedes.
 #
+#                  La primera pide el favor en vez de mandar ("¿quién está en la
+#                  casa?" y no "que lo haga alguien más"): quien contesta está
+#                  pidiendo ayuda, no repartiendo tarea. Es el mismo texto en
+#                  los cinco porque el favor se pide igual — qué favor es lo
+#                  dice la pregunta de arriba.
+#
 #                  Telegram limita la pregunta a 300 caracteres y no interpreta
 #                  HTML: las negritas se pierden. `validate` comprueba las dos
 #                  cosas, midiendo con el nombre más largo ya sustituido.
@@ -99,7 +105,7 @@ reminders:
     anchor: 2026-08-03          # el primer turno: lunes 3, PERSONA_1
     poll:
       options:
-        - "🙅 Hoy no puedo — que limpie alguien más"
+        - "🙅 Hoy no puedo, ¿quién está en la casa para que me haga el favor?"
         - "🔄 Ya lo cambié con alguien"
     message:
       - "🧽 Buenos días, {turno}. El baño amaneció esperándote. No es personal, es el calendario. 📅"
@@ -148,7 +154,7 @@ reminders:
     anchor: 2026-08-03          # lunes 3: PERSONA_1
     poll:
       options:
-        - "🙅 Hoy no puedo — que la saque alguien más"
+        - "🙅 Hoy no puedo, ¿quién está en la casa para que me haga el favor?"
         - "🔄 Ya lo cambié con alguien"
     message:
       - "🗑️ El calendario no miente: hoy le toca a {turno} demostrar su talento sacando la basura. 👏"
@@ -177,7 +183,7 @@ reminders:
     anchor: 2026-08-03          # necesario porque hay varios mensajes rotando
     poll:
       options:
-        - "🙅 Hoy no puedo — que la saque alguien más"
+        - "🙅 Hoy no puedo, ¿quién está en la casa para que me haga el favor?"
         - "🔄 Ya lo cambié con alguien"
     message:
       - "🗑️ Como hoy es viernes, o sea: ${PERSONA_4} y la basura, su cita semanal. 👏"
@@ -250,7 +256,7 @@ reminders:
     starts_on: 2026-08-17       # antes del anchor todo caería en el turno 0
     poll:
       options:
-        - "🙅 Hoy no puedo — que cocine alguien más"
+        - "🙅 Hoy no puedo, ¿quién está en la casa para que me haga el favor?"
         - "🔄 Ya lo cambié con alguien"
     message:
       - "🌅 ¡Buenos días, {turno}! Hoy te toca preparar el almuerzo de <b>mañana</b>. 🍳🍗 🧊 Saca del congelador <b>1 bolsa de carne de 1 libra</b> para que se vaya descongelando. Son <b>3 personas</b>. 🥡 ¿Quedó comida de ayer en la nevera? Si hay, úsala para completar y no se desperdicia nada. ¡Confiamos en ti! 😏"
@@ -293,7 +299,7 @@ reminders:
     starts_on: 2026-08-21       # sin esto, los días previos al anchor caen todos en el turno 0
     poll:
       options:
-        - "🙅 Hoy no puedo — que cocine alguien más"
+        - "🙅 Hoy no puedo, ¿quién está en la casa para que me haga el favor?"
         - "🔄 Ya lo cambié con alguien"
     message:
       - "🌅 ¡Buenos días, {turno}! Hoy preparas el almuerzo de <b>mañana</b>, y mañana somos <b>4 personas</b>. 🍳🍗 🧊 <b>Saca del congelador 1 bolsa de carne de libra y media.</b> 🥡 ¿Quedó comida de ayer en la nevera? Si hay, complétalo con eso. ¡Que alcance para todos! 👨‍🍳🔥"
