@@ -46,9 +46,12 @@
 #                  HTML: las negritas se pierden. `validate` comprueba las dos
 #                  cosas, midiendo con el nombre más largo ya sustituido.
 #
-#                  OJO: el bot manda las encuestas pero no lee las respuestas.
-#                  Sirven para que el grupo vea la novedad, no para que el
-#                  sistema reaccione.
+#                  Al marcar una opción, el bot la cuenta en el chat con un
+#                  mensaje colgado de la encuesta. Hace falta porque en Telegram
+#                  el voto solo le llega a quien mandó la encuesta: sin ese
+#                  aviso, la novedad quedaba escondida adentro de la encuesta y
+#                  el resto no se enteraba de nada. Lo manda el comando
+#                  `respuestas`, que corre junto al tick cada 5 minutos.
 #
 # Validá los cambios antes de subirlos:
 #   python -m recordatorios validate

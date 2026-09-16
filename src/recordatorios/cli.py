@@ -14,6 +14,7 @@ from recordatorios.dashboard import construir
 from recordatorios.render import render
 from recordatorios.loader import load_reminders
 from recordatorios.models import Reminder
+from recordatorios.respuestas import run_respuestas
 from recordatorios.schedule import (
     describe,
     local_str,
@@ -23,7 +24,7 @@ from recordatorios.schedule import (
     turn_index,
 )
 from recordatorios.store import Store
-from recordatorios.telegram import TelegramError, TelegramSender
+from recordatorios.telegram import TelegramConflict, TelegramError, TelegramSender
 from recordatorios.tick import lookback_minutes, run_tick
 
 
@@ -69,6 +70,15 @@ def _build_parser() -> argparse.ArgumentParser:
     tick = subs.add_parser("tick", help="Envía lo que haya vencido desde el último tick")
     tick.add_argument("--dry-run", action="store_true", help="Muestra qué haría, sin enviar nada")
     tick.set_defaults(handler=cmd_tick)
+
+    respuestas = subs.add_parser(
+        "respuestas",
+        help="Avisa al chat lo que la gente contestó en las encuestas",
+    )
+    respuestas.add_argument(
+        "--dry-run", action="store_true", help="Muestra qué avisaría, sin mandar nada"
+    )
+    respuestas.set_defaults(handler=cmd_respuestas)
 
     prueba = subs.add_parser("send-test", help="Envía un recordatorio ahora mismo, a mano")
     prueba.add_argument("--id", required=True, help="Id del recordatorio")
@@ -262,6 +272,32 @@ def cmd_tick(args: argparse.Namespace, settings: Settings) -> int:
     print(f"Backend: {destino}")
     print(resultado.report())
     return 1 if resultado.failures else 0
+
+
+def cmd_respuestas(args: argparse.Namespace, settings: Settings) -> int:
+    """Lee los votos de las encuestas y los cuenta en el chat.
+
+    Corre junto al tick, cada 5 minutos: una respuesta que dice "hoy no puedo"
+    sirve mientras todavía se pueda hacer algo al respecto.
+    """
+    recordatorios = load_reminders(settings.reminders_file)
+    bot = TelegramSender(settings.require_token())
+
+    try:
+        with Store.open(settings.database_url) as store:
+            resultado = run_respuestas(recordatorios, store, bot, dry_run=args.dry_run)
+            destino = store.backend if store.connected else f"{store.backend} (sin conectar)"
+    except TelegramConflict as exc:
+        # Otro runner está leyendo las mismas actualizaciones. Es lo esperable
+        # cuando se cruzan un bloque de tick-loop y una corrida suelta: él las
+        # está avisando, así que acá no hay nada que hacer ni que reportar como
+        # fallo.
+        print(f"Otro runner está leyendo las respuestas; lo dejo con eso. ({exc})")
+        return 0
+
+    print(f"Backend: {destino}")
+    print(resultado.report())
+    return 1 if resultado.error else 0
 
 
 def cmd_send_test(args: argparse.Namespace, settings: Settings) -> int:
@@ -459,7 +495,9 @@ def cmd_history(args: argparse.Namespace, settings: Settings) -> int:
 class _NullSender:
     """Emisor que no hace nada, para --dry-run."""
 
-    def send_message(self, chat_id: str, text: str, parse_mode=None, silent=False) -> dict:
+    def send_message(
+        self, chat_id: str, text: str, parse_mode=None, silent=False, reply_to_message_id=None
+    ) -> dict:
         return {}
 
     def send_poll(self, chat_id: str, question: str, options, silent=False) -> dict:

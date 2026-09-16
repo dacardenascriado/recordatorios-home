@@ -27,7 +27,8 @@ on:
           - check # revisa YAML, token, chats y base de datos. No envía nada
           - dry-run # muestra qué se enviaría ahora mismo. No envía nada
           - history # últimos envíos registrados, para saber qué pasó de verdad
-          - tick # la corrida normal
+          - tick # la corrida normal (tick + avisar respuestas de encuestas)
+          - respuestas # avisa al chat lo contestado en las encuestas, sin enviar recordatorios
           - send-test # envía un recordatorio ya, para probar de punta a punta
           - descartar # da por perdida una ocurrencia y la saca del dashboard
       send_test_id:
@@ -94,9 +95,10 @@ jobs:
         run: |
           # En las corridas por cron no hay inputs: ahí siempre es un tick.
           case "${ACCION:-tick}" in
-            check)     python -m recordatorios check ;;
-            dry-run)   python -m recordatorios tick --dry-run ;;
-            history)   python -m recordatorios history --limit 50 ;;
+            check)      python -m recordatorios check ;;
+            dry-run)    python -m recordatorios tick --dry-run ;;
+            history)    python -m recordatorios history --limit 50 ;;
+            respuestas) python -m recordatorios respuestas ;;
             send-test)
               if [ -z "$SEND_TEST_ID" ]; then
                 echo "Falta 'send_test_id': poné el id del recordatorio a probar." >&2
@@ -120,5 +122,17 @@ jobs:
                 exit 1
               fi
               ;;
-            *)         python -m recordatorios tick ;;
+            *)
+              # Los dos, y el resultado de los dos: si el tick falla, las
+              # respuestas de las encuestas se avisan igual. Son independientes
+              # y la novedad de "hoy no puedo" no tiene por qué esperar a que
+              # se arregle un envío.
+              #
+              # Que esto se cruce con un bloque de tick-loop no duplica nada:
+              # Telegram deja un solo lector de getUpdates y el segundo recibe
+              # un 409, que `respuestas` reconoce y deja pasar en silencio.
+              python -m recordatorios tick || fallo=1
+              python -m recordatorios respuestas || fallo=1
+              exit "${fallo:-0}"
+              ;;
           esac
