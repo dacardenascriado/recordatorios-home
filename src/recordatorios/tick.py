@@ -273,10 +273,11 @@ def _deliver(
         return Outcome(reminder, occurrence, "already_handled")
 
     turno = turn_index(reminder, occurrence) if reminder.needs_turn else 0
+    enviado: dict = {}
 
     try:
         if reminder.is_poll:
-            sender.send_poll(
+            enviado = sender.send_poll(
                 chat_id=reminder.chat_id,
                 question=reminder.render_question(turno),
                 options=reminder.poll_options,
@@ -297,9 +298,54 @@ def _deliver(
         return Outcome(reminder, occurrence, "failed", detalle)
 
     store.mark_sent(reminder.id, occurrence, now)
+    olvido = _remember_poll(reminder, occurrence, enviado, store, now) if reminder.is_poll else None
+
     quien = reminder.whose_turn(turno)
     detalle = f"retraso {_minutos(now - occurrence)}"
-    return Outcome(reminder, occurrence, "sent", f"turno de {quien}, {detalle}" if quien else detalle)
+    if quien:
+        detalle = f"turno de {quien}, {detalle}"
+    if olvido:
+        detalle = f"{detalle} — {olvido}"
+    return Outcome(reminder, occurrence, "sent", detalle)
+
+
+def _remember_poll(
+    reminder: Reminder,
+    occurrence: datetime,
+    enviado: dict,
+    store: Store,
+    now: datetime,
+) -> str | None:
+    """Guarda el id de encuesta que devolvió Telegram. Devuelve el problema, si hubo.
+
+    Cuando alguien vote, la actualización va a traer ese id y nada más: sin esta
+    fila no hay forma de saber de qué recordatorio era ni qué dice la opción que
+    marcó, y el aviso al grupo (`respuestas.py`) no se podría armar. Se anota acá
+    porque la conexión ya está abierta — no cuesta un despertar más de la base.
+
+    Un fallo acá no puede tumbar un envío que ya salió: la encuesta está en el
+    chat y el recordatorio cumplió. Lo que se pierde es que sus respuestas
+    avisen, y eso queda dicho en el informe del tick.
+    """
+    encuesta = (enviado or {}).get("poll") or {}
+    poll_id = encuesta.get("id")
+    if not poll_id:
+        # Un emisor que no devuelve la encuesta (dry-run, tests). No hay nada
+        # que anotar y tampoco es un problema que valga la pena reportar.
+        return None
+    try:
+        store.record_poll(
+            poll_id=str(poll_id),
+            reminder_id=reminder.id,
+            occurrence_at=occurrence,
+            chat_id=reminder.chat_id,
+            message_id=enviado.get("message_id"),
+            options=reminder.poll_options,
+            now=now,
+        )
+    except Exception as exc:
+        return f"sin registrar la encuesta ({type(exc).__name__}), sus respuestas no van a avisar"
+    return None
 
 
 def lookback_minutes(settings: Settings) -> int:

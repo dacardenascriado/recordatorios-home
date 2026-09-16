@@ -15,8 +15,9 @@ casi todo el mes.
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -41,6 +42,23 @@ STALE = "stale"
 # No borra nada —la ocurrencia sigue en el historial— pero deja de contar
 # como problema pendiente.
 DISMISSED = "dismissed"
+
+
+@dataclass(frozen=True)
+class PollRow:
+    """Una encuesta que salió, con lo que hace falta para leer sus respuestas.
+
+    Cuando alguien vota, Telegram avisa con el `poll_id` y nada más: ni de qué
+    recordatorio era, ni qué dice la opción que marcó, ni en qué chat vive. Todo
+    eso está acá, anotado en el momento de enviarla.
+    """
+
+    poll_id: str
+    reminder_id: str
+    occurrence_at: datetime
+    chat_id: str
+    message_id: int | None
+    options: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -118,6 +136,30 @@ class Store:
                 "CREATE INDEX IF NOT EXISTS delivery_log_logged_at "
                 "ON delivery_log (logged_at DESC)"
             )
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS polls (
+                    poll_id       TEXT PRIMARY KEY,
+                    reminder_id   TEXT NOT NULL,
+                    occurrence_at {ts} NOT NULL,
+                    chat_id       TEXT NOT NULL,
+                    message_id    BIGINT,
+                    options       TEXT NOT NULL,
+                    sent_at       {ts} NOT NULL
+                )
+                """
+            )
+            cur.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS poll_answers (
+                    poll_id     TEXT NOT NULL,
+                    user_id     TEXT NOT NULL,
+                    option_ids  TEXT NOT NULL,
+                    answered_at {ts} NOT NULL,
+                    PRIMARY KEY (poll_id, user_id)
+                )
+                """
+            )
 
     def prune(self, now: datetime, retention_days: int = RETENTION_DAYS) -> None:
         """Borra el historial viejo. Barato: solo corre cuando hay algo que enviar."""
@@ -125,6 +167,16 @@ class Store:
         with self._dialect.cursor() as cur:
             cur.execute(self._sql("DELETE FROM deliveries WHERE occurrence_at < {p}"), (corte,))
             cur.execute(self._sql("DELETE FROM delivery_log WHERE logged_at < {p}"), (corte,))
+            # Las respuestas primero: borrar la encuesta antes dejaría sus votos
+            # apuntando a nada.
+            cur.execute(
+                self._sql(
+                    "DELETE FROM poll_answers WHERE poll_id IN "
+                    "(SELECT poll_id FROM polls WHERE sent_at < {p})"
+                ),
+                (corte,),
+            )
+            cur.execute(self._sql("DELETE FROM polls WHERE sent_at < {p}"), (corte,))
 
     # -- entregas ---------------------------------------------------------
 
@@ -359,6 +411,113 @@ class Store:
             )
             for row in rows
         ]
+
+    # -- encuestas --------------------------------------------------------
+
+    def record_poll(
+        self,
+        poll_id: str,
+        reminder_id: str,
+        occurrence_at: datetime,
+        chat_id: str,
+        message_id: int | None,
+        options: Sequence[str],
+        now: datetime,
+    ) -> None:
+        """Anota la encuesta recién enviada, para poder traducir después sus votos.
+
+        Se escribe justo después de `mark_sent`, con la conexión ya abierta: no
+        cuesta un despertar más de la base.
+        """
+        sql = self._sql(
+            """
+            INSERT INTO polls
+                (poll_id, reminder_id, occurrence_at, chat_id, message_id, options, sent_at)
+            VALUES ({p}, {p}, {p}, {p}, {p}, {p}, {p})
+            ON CONFLICT (poll_id) DO NOTHING
+            """
+        )
+        with self._dialect.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    poll_id,
+                    reminder_id,
+                    self._dialect.encode_ts(occurrence_at),
+                    chat_id,
+                    message_id,
+                    json.dumps(list(options), ensure_ascii=False),
+                    self._dialect.encode_ts(now),
+                ),
+            )
+
+    def poll_info(self, poll_id: str) -> PollRow | None:
+        """La encuesta a la que pertenece un voto, o None si no la conocemos.
+
+        No conocerla es lo normal para las encuestas anteriores a esta tabla, y
+        es a propósito que eso no avise nada: la primera lectura de `getUpdates`
+        se trae hasta 24 h de votos viejos, y anunciarlos todos de golpe sería
+        un aluvión en el chat por cosas que ya pasaron.
+        """
+        filas = self._query(
+            self._sql(
+                """
+                SELECT poll_id, reminder_id, occurrence_at, chat_id, message_id, options
+                FROM polls WHERE poll_id = {p}
+                """
+            ),
+            (poll_id,),
+        )
+        if not filas:
+            return None
+        fila = filas[0]
+        return PollRow(
+            poll_id=fila[0],
+            reminder_id=fila[1],
+            occurrence_at=self._dialect.decode_ts(fila[2]),
+            chat_id=fila[3],
+            message_id=int(fila[4]) if fila[4] is not None else None,
+            options=tuple(json.loads(fila[5])),
+        )
+
+    def register_answer(
+        self, poll_id: str, user_id: str, option_ids: Sequence[int], now: datetime
+    ) -> bool:
+        """Anota qué marcó alguien. True si hay novedad que valga la pena avisar.
+
+        Devuelve False cuando ya habíamos registrado exactamente esa misma
+        respuesta: Telegram reenvía las actualizaciones que no se alcanzaron a
+        confirmar, y sin esto el grupo vería el mismo aviso dos veces. Un cambio
+        de opción sí es novedad, y retirar el voto (lista vacía) también.
+        """
+        codificadas = json.dumps(sorted(int(i) for i in option_ids))
+        sql = self._sql(
+            """
+            INSERT INTO poll_answers (poll_id, user_id, option_ids, answered_at)
+            VALUES ({p}, {p}, {p}, {p})
+            ON CONFLICT (poll_id, user_id) DO UPDATE
+                SET option_ids  = {excluded}.option_ids,
+                    answered_at = {excluded}.answered_at
+                WHERE poll_answers.option_ids <> {excluded}.option_ids
+            RETURNING 1
+            """
+        )
+        with self._dialect.cursor() as cur:
+            cur.execute(sql, (poll_id, user_id, codificadas, self._dialect.encode_ts(now)))
+            return cur.fetchone() is not None
+
+    def forget_answer(self, poll_id: str, user_id: str) -> None:
+        """Deshace un `register_answer` cuyo aviso no llegó a salir.
+
+        Sin esto, un fallo al mandar el mensaje dejaría la respuesta marcada
+        como ya avisada y el reintento la saltaría: la novedad se perdería en
+        silencio, que es justo lo que este sistema no puede permitirse.
+        """
+        with self._dialect.cursor() as cur:
+            cur.execute(
+                self._sql("DELETE FROM poll_answers WHERE poll_id = {p} AND user_id = {p}"),
+                (poll_id, user_id),
+            )
 
     # -- utilidades -------------------------------------------------------
 

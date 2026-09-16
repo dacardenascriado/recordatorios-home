@@ -450,3 +450,40 @@ def test_una_encuesta_que_falla_se_reintenta_como_cualquier_envio(store, setting
     resultado = run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(minutes=7))
     assert [o.status for o in resultado.outcomes] == ["sent"]
     assert len(sender.encuestas) == 1
+
+
+class FakePollSenderConId(FakePollSender):
+    """Como Telegram de verdad: `sendPoll` devuelve la encuesta con su id."""
+
+    def send_poll(self, chat_id, question, options, silent=False):
+        respuesta = super().send_poll(chat_id, question, options, silent)
+        return {**respuesta, "poll": {"id": f"poll-{len(self.encuestas)}"}}
+
+
+def test_al_enviar_una_encuesta_se_guarda_su_id(store, settings):
+    """Sin esta fila, el voto que llegue después no se puede traducir: la
+    actualización trae el poll_id y nada más."""
+    sender = FakePollSenderConId()
+    reminder = lunes(
+        messages=("<b>{turno}</b>, ¿sacas la basura?",),
+        rotation=("Ana",),
+        poll_options=("Sí", "No"),
+    )
+
+    run_tick([reminder], store, sender, settings, now=OCURRENCIA + timedelta(minutes=2))
+
+    info = store.poll_info("poll-1")
+    assert info is not None
+    assert info.reminder_id == "lunes"
+    assert info.chat_id == "555"
+    assert info.message_id == 1
+    assert info.options == ("Sí", "No")
+    assert info.occurrence_at == OCURRENCIA
+
+
+def test_un_mensaje_normal_no_registra_encuesta(store, settings):
+    sender = FakePollSenderConId()
+
+    run_tick([lunes()], store, sender, settings, now=OCURRENCIA + timedelta(minutes=2))
+
+    assert store.poll_info("poll-1") is None

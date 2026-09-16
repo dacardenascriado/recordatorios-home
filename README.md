@@ -244,14 +244,15 @@ justamente lo que intenta ocultar.
 ### 4. Comprobar que quedó bien
 
 En la pestaña *Actions* → workflow **tick** → *Run workflow*. El desplegable
-*Qué ejecutar* trae cuatro opciones, y las dos primeras no envían nada:
+*Qué ejecutar* trae estas opciones, y las tres primeras no envían nada:
 
 | Opción | Qué hace |
 |---|---|
 | `check` | Revisa las cuatro cosas que tienen que estar bien: el YAML, que el token sirva, que el bot alcance cada chat y que la base conecte. Es el diagnóstico completo |
 | `dry-run` | Muestra qué se enviaría en este instante |
 | `history` | Los últimos 50 envíos registrados, con su estado (`sent`, `failed`, `stale`). Es lo que hay que mirar cuando un recordatorio no llegó |
-| `tick` | La corrida normal, igual a la del cron |
+| `tick` | La corrida normal, igual a la del cron: envía lo vencido y avisa las respuestas de las encuestas |
+| `respuestas` | Solo la segunda mitad: lee los votos de las encuestas y los avisa al chat, sin enviar recordatorios |
 | `descartar` | Da por perdida una ocurrencia (`descartar_ref`) o todo lo anterior a una fecha (`descartar_antes`) |
 | `send-test` | Manda un recordatorio ya mismo. Poné su `id` en el campo de abajo. Usa el turno de la ocurrencia más cercana —la de hoy si ya disparó— y te dice cuál imitó |
 
@@ -335,9 +336,27 @@ diferencia es todo, y el texto de un botón es donde se nota.
 La encuesta **no es anónima**, que es todo el punto: lo que se quiere saber no
 es cuántos contestaron sino quién avisó que no puede.
 
-**El bot manda las encuestas pero no lee las respuestas.** Sirven para que el
-grupo vea quién confirmó, no para que el sistema reaccione — insistirle a quien
-no contestó necesitaría `getUpdates` o un webhook, y estado en la base.
+#### Cuando alguien contesta, el grupo se entera
+
+Una encuesta de Telegram le avisa a quien la mandó —el bot—, no a las personas
+del chat. Quien marcaba "hoy no puedo" quedaba tranquilo creyendo que ya había
+avisado, y los demás no veían nada salvo que abrieran la encuesta a mirar los
+votos: la novedad más importante que manda este sistema era justo la única que
+llegaba en silencio.
+
+Por eso cada voto se convierte en un mensaje en el mismo chat, colgado de la
+encuesta que lo originó:
+
+> 📣 **Ana** respondió en «Aseo del baño — aviso de la mañana»:
+> 🙅 Hoy no puedo, ¿quién está en la casa para que me haga el favor?
+
+Retirar el voto también se avisa (que alguien se desdiga cambia lo que el resto
+tiene que hacer), y cambiar de opción vuelve a avisar. Lo manda el comando
+`respuestas`, que corre junto al tick cada 5 minutos — ver
+[Cómo se leen las respuestas](#cómo-se-leen-las-respuestas).
+
+Lo que el sistema sigue sin hacer es **reaccionar**: no insiste, no reasigna ni
+busca reemplazo. Cuenta la novedad y deja que la casa se organice.
 
 Dos límites de Telegram que conviene tener presentes, porque el síntoma de
 pasarse es un recordatorio que no llega:
@@ -391,6 +410,7 @@ python -m recordatorios list              # cada recordatorio con sus próximas 
 python -m recordatorios agenda --days 28  # cronología combinada
 python -m recordatorios tick --dry-run    # qué se enviaría ahora mismo
 python -m recordatorios tick              # el envío real (lo que corre en Actions)
+python -m recordatorios respuestas        # avisa al chat lo contestado en las encuestas
 python -m recordatorios send-test --id X  # manda uno a mano, con el turno de la ocurrencia más cercana
 python -m recordatorios history           # últimos envíos registrados
 python -m recordatorios dashboard         # arma la página de estado en site/
@@ -483,6 +503,51 @@ se calcula todo con el YAML en la mano, y la conexión se abre recién si quedó
 algo pendiente. No es una optimización cosmética — es lo que hace viable el plan
 gratuito de Neon, como se explica abajo.
 
+### Cómo se leen las respuestas
+
+Junto a cada tick corre `respuestas`, que es la otra mitad de las encuestas:
+lee los votos con `getUpdates` y los cuenta en el chat.
+
+```
+python -m recordatorios respuestas
+        │
+        ├─ getUpdates(allowed_updates=["poll_answer"])
+        │
+        ├─ ¿ningún voto? → termina sin conectar a la base    ← casi siempre
+        │
+        └─ ¿hay votos? → por cada uno
+              ├─ ¿de qué encuesta es?  (tabla `polls`, escrita al enviarla)
+              ├─ ¿ya lo habíamos avisado?  (tabla `poll_answers`)
+              └─ mensaje al chat, colgado de la encuesta
+                    └─ y recién ahí se confirma la lectura
+```
+
+Cuatro decisiones, por si alguna vez hay que tocarlo:
+
+**No hay cursor que guardar.** `getUpdates(offset=N)` pide desde N y, con eso
+mismo, confirma lo anterior: Telegram lo borra y no lo vuelve a mandar. El
+cursor vive en Telegram, así que leer respuestas no obliga a despertar la base
+—y como casi ninguna corrida encuentra votos, casi ninguna la abre—. Es la
+misma disciplina que sostiene el tick.
+
+**Se confirma solo lo que ya se avisó.** Si un aviso no sale, ahí se corta: lo
+que quedó atrás sigue pendiente en Telegram (los guarda 24 h) y lo retoma la
+corrida siguiente. Y si el mensaje falla después de anotarse, la anotación se
+deshace para que el reintento vuelva a avisar. Una respuesta no puede
+desaparecer sin que nadie la haya visto.
+
+**Solo se avisan encuestas registradas.** El `poll_id` de un voto no dice nada
+por sí solo: ni de qué recordatorio era, ni qué dice la opción marcada, ni en
+qué chat vive. Eso se anota en la tabla `polls` al enviar la encuesta, con la
+conexión ya abierta. El efecto secundario es bienvenido: la primera lectura
+arrastra hasta 24 h de votos viejos, y como ninguno de esos está registrado, no
+se anuncian de golpe.
+
+**Dos lectores a la vez no se pisan.** Telegram admite un solo `getUpdates` y
+le contesta 409 al segundo. Cuando un bloque de `tick-loop` se cruza con una
+corrida suelta de `tick.yml`, la que pierde lo reconoce y se aparta en silencio:
+la otra ya está avisando.
+
 ### El presupuesto de Neon
 
 Esto merece su propio apartado porque es la restricción menos evidente del
@@ -519,6 +584,10 @@ El caché vive en el workspace, así que dura lo que dura un bloque de
 respaldo de `tick.yml`, que estrenan runner cada vez, van con
 `TICK_LOOKBACK_MINUTES=240`: sin caché, una ventana ancha ahí sí saldría cara.
 
+Las respuestas de las encuestas no cambian esta cuenta: `respuestas` pregunta
+por los votos a Telegram, no a Neon, y solo abre la base los días en que alguien
+efectivamente contestó — que son pocos, porque el silencio significa "lo hago".
+
 De ahí salen los parámetros que conviene no tocar a la ligera:
 
 | Variable | Por defecto | Efecto de subirlo |
@@ -543,6 +612,7 @@ src/recordatorios/
   store.py                  Neon/SQLite: claims e historial (conexión perezosa)
   telegram.py               Bot API con reintentos
   tick.py                   la corrida: ventana → envíos
+  respuestas.py             los votos de las encuestas → avisos al chat
   dashboard.py              el cruce calendario × base → los datos de la página
   render.py                 la página en sí: HTML, estilos, la tira de latidos
   cli.py                    los comandos

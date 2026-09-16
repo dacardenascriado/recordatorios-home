@@ -82,6 +82,11 @@ jobs:
             # hay que seguir latiendo: el próximo reintenta. Sin el `|| true`,
             # el `bash -e` de Actions cortaría el bloque entero.
             python -m recordatorios tick || echo "::warning::el tick devolvió error, sigo latiendo"
+            # Lo que la gente contestó en las encuestas, avisado al chat. Va
+            # acá y no en un workflow aparte porque tiene el mismo apuro que el
+            # tick: un "hoy no puedo" sirve mientras todavía se pueda hacer
+            # algo. No abre la base salvo que haya respuestas nuevas.
+            python -m recordatorios respuestas || echo "::warning::el aviso de respuestas devolvió error, sigo latiendo"
             echo "::endgroup::"
 
             restante=$(( DURACION - ( $(date +%s) - inicio ) ))
